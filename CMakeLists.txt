@@ -1,7 +1,13 @@
 cmake_minimum_required(VERSION 3.20)
-project(LiteMusic VERSION 0.1.0 LANGUAGES C CXX RC)
+project(LiteMusic VERSION 0.1.0 LANGUAGES C CXX)
 
-add_executable(LiteMusic WIN32 src/main.cpp src/music.cpp src/settings.cpp third_party/cjson/cJSON.c resources/LiteMusic.rc)
+if(NOT WIN32)
+    include(cmake/Portable.cmake)
+    return()
+endif()
+
+enable_language(RC)
+add_executable(LiteMusic WIN32 src/main.cpp src/music.cpp src/music_win.cpp src/settings.cpp third_party/cjson/cJSON.c resources/LiteMusic.rc)
 set_property(SOURCE resources/LiteMusic.rc APPEND PROPERTY OBJECT_DEPENDS
     "${CMAKE_CURRENT_SOURCE_DIR}/resources/LiteMusic.ico;${CMAKE_CURRENT_SOURCE_DIR}/resources/LiteMusic.manifest;${CMAKE_CURRENT_SOURCE_DIR}/LICENSE;${CMAKE_CURRENT_SOURCE_DIR}/THIRD_PARTY_NOTICES")
 target_compile_features(LiteMusic PRIVATE cxx_std_20)

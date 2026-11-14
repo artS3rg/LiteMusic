@@ -1,0 +1,8 @@
+[Desktop Entry]
+Type=Application
+Name=LiteMusic
+Comment=Yandex Music client
+Exec=LiteMusic
+Icon=litemusic
+Categories=AudioVideo;Audio;Player;
+Terminal=false

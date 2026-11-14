@@ -1,9 +1,8 @@
 #pragma once
 
-#include <windows.h>
+#include <cstddef>
 #include <functional>
 #include <stdexcept>
-#include <stop_token>
 #include <string>
 #include <string_view>
 #include <vector>
@@ -44,8 +43,8 @@ struct TracksPage {
 
 class HttpError : public std::runtime_error {
 public:
-    DWORD status;
-    HttpError(DWORD status, std::string message);
+    unsigned long status;
+    HttpError(unsigned long status, std::string message);
 };
 
 std::wstring widen(std::string_view input);
@@ -57,7 +56,7 @@ void forget_token();
 class Music {
 public:
     explicit Music(std::string token = {});
-    static std::string sign_in(std::stop_token stop, const std::function<void(DeviceCode)>& notify);
+    static std::string sign_in(const std::function<bool()>& canceled, const std::function<void(DeviceCode)>& notify);
     Profile profile() const;
     TracksPage search(const std::wstring& query, size_t page) const;
     TracksPage favorites(const std::string& uid, size_t page) const;

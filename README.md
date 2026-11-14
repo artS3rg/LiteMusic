@@ -1,15 +1,17 @@
 <div align="center">
   <img src="docs/icon.png" width="104" height="104" alt="Иконка LiteMusic">
   <h1>LiteMusic</h1>
-  <p><strong>Компактный клиент Яндекс Музыки для Windows</strong></p>
+  <p><strong>Компактный клиент Яндекс Музыки для Windows, Linux и macOS</strong></p>
   <p>Любимые треки, плейлисты, поиск и «Моя волна» в одном приложении.</p>
   <p>
     <a href="https://github.com/artS3rg/LiteMusic/releases"><img alt="Последний выпуск LiteMusic" src="https://img.shields.io/github/v/release/artS3rg/LiteMusic?label=%D0%92%D1%8B%D0%BF%D1%83%D1%81%D0%BA&amp;style=flat-square&amp;color=16A085"></a>
     <img alt="Windows 10 и 11, x64" src="https://img.shields.io/badge/Windows%2010%20%2F%2011-x64-2563EB?style=flat-square">
-    <img alt="C++20 и Win32" src="https://img.shields.io/badge/C%2B%2B20-Win32-7357C7?style=flat-square">
+    <img alt="Linux x86-64" src="https://img.shields.io/badge/Linux-x86--64-D48F29?style=flat-square">
+    <img alt="macOS Apple Silicon и Intel" src="https://img.shields.io/badge/macOS-Apple%20Silicon%20%2F%20Intel-7357C7?style=flat-square">
+    <img alt="C++20" src="https://img.shields.io/badge/C%2B%2B-20-475569?style=flat-square">
     <a href="LICENSE"><img alt="Лицензия MIT" src="https://img.shields.io/badge/license-MIT-E2A83B?style=flat-square"></a>
   </p>
-  <p><a href="https://github.com/artS3rg/LiteMusic/releases/latest/download/LiteMusic.exe"><strong>Скачать .exe</strong></a> · <a href="#сборка">Как собрать</a> · <a href="https://github.com/artS3rg/LiteMusic/issues/new">Сообщить об ошибке</a></p>
+  <p><a href="https://github.com/artS3rg/LiteMusic/releases/latest/download/LiteMusic.exe"><strong>Скачать .exe</strong></a> · <a href="#запуск">Linux и macOS</a> · <a href="#сборка">Как собрать</a> · <a href="https://github.com/artS3rg/LiteMusic/issues/new">Сообщить об ошибке</a></p>
 </div>
 
 ## Скриншоты
@@ -22,13 +24,13 @@
 
 ![Мини-плеер LiteMusic с перемоткой, громкостью и управлением треками](docs/mini-player.jpg)
 
-*На скриншотах демонстрационная коллекция.*
+*На скриншотах Windows и демонстрационная коллекция.*
 
 > [!NOTE]
 > LiteMusic запускается одним файлом `LiteMusic.exe`. Воспроизведение использует Media Foundation, который входит в состав Windows.
 
 > [!TIP]
-> Нажмите **Ctrl+M** или кнопку **Мини**, чтобы оставить на экране только плеер. Значок закрепления удерживает его поверх других окон.
+> Нажмите **Ctrl+M** (**⌘M** на Mac) или кнопку **Мини**, чтобы оставить на экране только плеер. Кнопка закрепления удерживает его поверх других окон, если оконный менеджер это поддерживает.
 
 ## Возможности
 
@@ -41,15 +43,25 @@
 
 ## Запуск
 
-1. Откройте **LiteMusic.exe** из выпуска или соберите его по инструкции ниже.
-2. Нажмите **Войти**. Введите код из LiteMusic на открывшейся странице Яндекса и подтвердите вход.
-3. Выберите раздел. Двойной щелчок или Enter запускает выбранный трек. Ctrl+F переводит фокус в поиск, Ctrl+M переключает мини-плеер.
+Первые сборки Linux и macOS доступны в [GitHub Actions](https://github.com/artS3rg/LiteMusic/actions/workflows/portable.yml). Откройте успешный запуск и выберите архив в разделе **Artifacts**. Для скачивания артефактов нужен вход в GitHub.
 
-OAuth-токен хранится в Диспетчере учётных данных Windows. В реестре текущего пользователя по адресу HKCU\Software\LiteMusic сохраняются громкость и данные для возобновления трека. Кнопка **Выйти** удаляет сохранённый токен и последний трек. При восстановлении открывается один трек. Для продолжения конкретного плейлиста или «Моей волны» откройте соответствующий раздел.
+| Система | Как запустить |
+|---|---|
+| Windows 10/11 x64 | Скачайте **LiteMusic.exe** из [выпуска](https://github.com/artS3rg/LiteMusic/releases/latest) и откройте. |
+| Linux x86-64 | Для Ubuntu 24.04: `sudo apt install ./LiteMusic-linux-x86_64.deb`. Затем откройте LiteMusic из меню или выполните `LiteMusic`. В `.tar.gz` лежит тот же бинарник для ручной установки; ему нужны совместимые версии системных библиотек и плагины GStreamer из зависимостей `packaging/debian-control`. Графика использует X11 или XWayland. |
+| macOS 12+ | Возьмите ZIP **arm64** для Apple Silicon или **x86_64** для Intel. Распакуйте и откройте **LiteMusic.app**. Сборки тестовые: у них нет нотариального заверения Apple. Если macOS заблокирует запуск, откройте **Системные настройки → Конфиденциальность и безопасность → Всё равно открыть**. |
+
+1. Откройте приложение.
+2. Нажмите **Войти**. Введите код из LiteMusic на открывшейся странице Яндекса и подтвердите вход.
+3. Выберите раздел. Двойной щелчок запускает выбранный трек. В Windows доступны Enter для воспроизведения и Ctrl+F для поиска.
+
+OAuth-токен хранится в Диспетчере учётных данных Windows, Связке ключей macOS или Secret Service на Linux. Если хранилище недоступно, вход действует до закрытия приложения. Отдельно сохраняются громкость и позиция трека. Кнопка **Выйти** удаляет сохранённый токен и последний трек. При восстановлении открывается один трек. Для продолжения конкретного плейлиста или «Моей волны» откройте соответствующий раздел.
 
 LiteMusic использует неофициальный API Яндекс Музыки. Вход и каталог зависят от его доступности, а возможность воспроизведения — от аккаунта. Приложение запрашивает поток MP3 стандартного качества.
 
 ## Сборка
+
+### Windows
 
 Понадобятся CMake 3.20+, Ninja и MinGW-w64 x64 с поддержкой C++20 и заголовками Windows Media. Добавьте MinGW и Ninja в PATH.
 
@@ -69,6 +81,17 @@ Start-Process .\build\LiteMusic.exe -ArgumentList '--verify-audio "C:\music\trac
 ~~~
 
 Код 0 означает, что беззвучное воспроизведение достигло 0,5 секунды.
+
+### Linux и macOS
+
+Нужен CMake 3.20+ с компилятором C++20. CMake загрузит FLTK. На Ubuntu 24.04 установите пакеты из шага **Install dependencies** в [сценарии сборки](.github/workflows/portable.yml). На Mac установите Xcode Command Line Tools.
+
+~~~sh
+cmake -S . -B build -DCMAKE_BUILD_TYPE=Release
+cmake --build build --parallel
+~~~
+
+На Linux результат — `build/LiteMusic`, на macOS — `build/LiteMusic.app`. Системные медиаклавиши пока поддерживаются в сборке Windows.
 
 ## Расход ресурсов
 

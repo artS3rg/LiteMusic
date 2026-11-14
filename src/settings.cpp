@@ -1,3 +1,4 @@
+#include <windows.h>
 #include "settings.hpp"
 #include "cJSON.h"
 

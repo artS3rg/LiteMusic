@@ -1,3 +1,4 @@
+#include <windows.h>
 #include "music.hpp"
 #include "media_keys.hpp"
 #include "resource.h"
@@ -13,6 +14,7 @@
 #include <deque>
 #include <memory>
 #include <optional>
+#include <stop_token>
 #include <thread>
 #include <utility>
 
@@ -930,7 +932,7 @@ private:
     void sign_in() {
         // The worker delivers the code to the window's message loop.
         work(Job::login, L"Получаем код входа…", [this](std::stop_token stop) -> Finish {
-            auto token = Music::sign_in(stop, [this](DeviceCode device) {
+            auto token = Music::sign_in([&] { return stop.stop_requested(); }, [this](DeviceCode device) {
                 auto code = std::make_unique<DeviceCode>(std::move(device));
                 if (PostMessageW(hwnd_, device_notice, 0, reinterpret_cast<LPARAM>(code.get()))) code.release();
             });

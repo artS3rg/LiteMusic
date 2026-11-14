@@ -1,0 +1,86 @@
+name: Linux and macOS
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - '.github/workflows/portable.yml'
+      - 'CMakeLists.txt'
+      - 'cmake/**'
+      - 'src/**'
+      - 'packaging/**'
+      - 'third_party/**'
+      - 'docs/icon.png'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: portable-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  linux:
+    name: Linux x86-64
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          persist-credentials: false
+      - name: Install dependencies
+        run: |
+          sudo apt-get update -qq
+          sudo apt-get install -y --no-install-recommends ninja-build libx11-dev libxext-dev libxft-dev libxinerama-dev libxcursor-dev libxrender-dev libcurl4-openssl-dev libssl-dev uuid-dev libgstreamer1.0-dev libsecret-1-dev gstreamer1.0-plugins-base gstreamer1.0-plugins-good xvfb xauth
+      - name: Build, package, and verify playback
+        run: |
+          cmake -S . -B build -G Ninja -DCMAKE_BUILD_TYPE=Release
+          cmake --build build --parallel 4
+          cmake --install build --prefix "$PWD/stage/usr"
+          mkdir -p dist stage/DEBIAN
+          install -m 644 packaging/debian-control stage/DEBIAN/control
+          dpkg-deb --root-owner-group --build stage dist/LiteMusic-linux-x86_64.deb
+          # Exercise the packaged executable and actual GStreamer demuxer/decoder.
+          dpkg-deb -x dist/LiteMusic-linux-x86_64.deb extracted
+          python3 -c 'import wave; f = wave.open("sample.wav", "wb"); f.setparams((1, 2, 16000, 0, "NONE", "")); f.writeframes(bytes(64000)); f.close()'
+          xvfb-run -a extracted/usr/bin/LiteMusic --verify-audio "file://$PWD/sample.wav"
+          ! ldd extracted/usr/bin/LiteMusic | grep 'not found'
+          tar -C stage/usr -czf dist/LiteMusic-linux-x86_64.tar.gz .
+      - uses: actions/upload-artifact@v7
+        with:
+          name: LiteMusic-Linux-x86_64
+          path: dist/*
+          if-no-files-found: error
+
+  macos:
+    name: macOS ${{ matrix.arch }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - {runner: macos-15, arch: arm64}
+          - {runner: macos-15-intel, arch: x86_64}
+    runs-on: ${{ matrix.runner }}
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          persist-credentials: false
+      - name: Build, package, and verify playback
+        run: |
+          cmake -S . -B build -DCMAKE_BUILD_TYPE=Release -DCMAKE_OSX_ARCHITECTURES=${{ matrix.arch }} -DCMAKE_OSX_DEPLOYMENT_TARGET=12.0
+          cmake --build build --parallel 3
+          codesign --force --sign - build/LiteMusic.app
+          codesign --verify --strict build/LiteMusic.app
+          mkdir -p dist
+          zip="dist/LiteMusic-macOS-${{ matrix.arch }}.zip"
+          ditto -c -k --sequesterRsrc --keepParent build/LiteMusic.app "$zip"
+          ditto -x -k "$zip" extracted
+          test "$(lipo -archs extracted/LiteMusic.app/Contents/MacOS/LiteMusic)" = "${{ matrix.arch }}"
+          ! otool -L extracted/LiteMusic.app/Contents/MacOS/LiteMusic | grep -E 'opt/homebrew|usr/local'
+          python3 -c 'import wave; f = wave.open("sample.wav", "wb"); f.setparams((1, 2, 16000, 0, "NONE", "")); f.writeframes(bytes(64000)); f.close()'
+          extracted/LiteMusic.app/Contents/MacOS/LiteMusic --verify-audio "file://$PWD/sample.wav"
+      - uses: actions/upload-artifact@v7
+        with:
+          name: LiteMusic-macOS-${{ matrix.arch }}
+          path: dist/*.zip
+          if-no-files-found: error

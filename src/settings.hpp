@@ -1,12 +1,13 @@
 #pragma once
 
 #include "music.hpp"
+#include <cstdint>
 #include <optional>
 
 struct ResumeTrack {
     std::string account;
     Track track;
-    LONGLONG position = 0;
+    std::int64_t position = 0;
 };
 
 int load_volume();
