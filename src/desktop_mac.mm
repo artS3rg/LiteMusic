@@ -4,6 +4,7 @@
 #include <Cocoa/Cocoa.h>
 
 void pin_window(Fl_Window& window, bool pinned) {
-    NSWindow* native = fl_xid(&window);
+    // FLTK only forward-declares its private NSWindow subclass.
+    auto* native = (NSWindow*)fl_xid(&window);
     [native setLevel:pinned ? NSFloatingWindowLevel : NSNormalWindowLevel];
 }

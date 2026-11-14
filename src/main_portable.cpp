@@ -50,6 +50,18 @@ std::string row(std::wstring_view value) {
 }
 
 using FetchPage = std::function<TracksPage(const Music&, size_t)>;
+
+class TrackBrowser : public Fl_Hold_Browser {
+    using Fl_Hold_Browser::Fl_Hold_Browser;
+    int handle(int event) override {
+        if (event == FL_KEYDOWN && (Fl::event_key() == FL_Enter || Fl::event_key() == FL_KP_Enter)) {
+            do_callback();
+            return 1;
+        }
+        return Fl_Hold_Browser::handle(event);
+    }
+};
+
 struct List {
     std::vector<Track> tracks;
     FetchPage fetch;
@@ -106,8 +118,9 @@ public:
         search_->when(FL_WHEN_ENTER_KEY_ALWAYS);
         search_->callback([](Fl_Widget*, void* p) { static_cast<App*>(p)->search(); }, this);
         search_button_ = button(473, 123, 95, 29, "Поиск", [this] { search(); });
-        browser_ = new Fl_Hold_Browser(12, 160, 556, 149);
+        browser_ = new TrackBrowser(12, 160, 556, 149);
         browser_->format_char(0);
+        browser_->when(FL_WHEN_RELEASE_ALWAYS);
         browser_->color(panel);
         browser_->textcolor(ink);
         browser_->selection_color(accent);
