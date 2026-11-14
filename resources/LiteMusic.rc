@@ -1,0 +1,6 @@
+#include "resource.h"
+
+IDI_LITEMUSIC ICON "LiteMusic.ico"
+1 24 "LiteMusic.manifest"
+201 RCDATA "../LICENSE"
+202 RCDATA "../THIRD_PARTY_NOTICES"
