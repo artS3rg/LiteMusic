@@ -36,12 +36,14 @@ jobs:
         run: |
           cmake -S . -B build -G Ninja -DCMAKE_BUILD_TYPE=Release
           cmake --build build --parallel 4
-          cmake --install build --prefix "$PWD/stage/usr"
+          cmake --install build --component LiteMusic --prefix "$PWD/stage/usr"
           mkdir -p dist stage/DEBIAN
           install -m 644 packaging/debian-control stage/DEBIAN/control
           dpkg-deb --root-owner-group --build stage dist/LiteMusic-linux-x86_64.deb
           # Exercise the packaged executable and actual GStreamer demuxer/decoder.
           dpkg-deb -x dist/LiteMusic-linux-x86_64.deb extracted
+          test ! -d extracted/usr/include
+          test ! -d extracted/usr/lib
           python3 -c 'import wave; f = wave.open("sample.wav", "wb"); f.setparams((1, 2, 16000, 0, "NONE", "")); f.writeframes(bytes(64000)); f.close()'
           xvfb-run -a extracted/usr/bin/LiteMusic --verify-audio "file://$PWD/sample.wav"
           ! ldd extracted/usr/bin/LiteMusic | grep 'not found'
