@@ -1,8 +1,34 @@
-# LiteMusic
+<div align="center">
+  <img src="docs/icon.png" width="104" height="104" alt="Иконка LiteMusic">
+  <h1>LiteMusic</h1>
+  <p><strong>Компактный клиент Яндекс Музыки для Windows</strong></p>
+  <p>Любимые треки, плейлисты, поиск и «Моя волна» в одном приложении.</p>
+  <p>
+    <a href="https://github.com/artS3rg/LiteMusic/releases"><img alt="Последний выпуск LiteMusic" src="https://img.shields.io/github/v/release/artS3rg/LiteMusic?label=%D0%92%D1%8B%D0%BF%D1%83%D1%81%D0%BA&amp;style=flat-square&amp;color=16A085"></a>
+    <img alt="Windows 10 и 11, x64" src="https://img.shields.io/badge/Windows%2010%20%2F%2011-x64-2563EB?style=flat-square">
+    <img alt="C++20 и Win32" src="https://img.shields.io/badge/C%2B%2B20-Win32-7357C7?style=flat-square">
+    <a href="LICENSE"><img alt="Лицензия MIT" src="https://img.shields.io/badge/license-MIT-E2A83B?style=flat-square"></a>
+  </p>
+  <p><a href="https://github.com/artS3rg/LiteMusic/releases/latest/download/LiteMusic.exe"><strong>Скачать .exe</strong></a> · <a href="#сборка">Как собрать</a> · <a href="https://github.com/artS3rg/LiteMusic/issues/new">Сообщить об ошибке</a></p>
+</div>
 
-Компактный клиент Яндекс Музыки для Windows 10/11 x64. Написан на C++20 и работает с системными Win32, WinHTTP и Media Foundation. Для запуска достаточно одного файла.
+## Скриншоты
 
-[Выпуски](https://github.com/artS3rg/LiteMusic/releases) · [Как собрать](#сборка) · [Сообщить об ошибке](https://github.com/artS3rg/LiteMusic/issues/new)
+**Основное окно** с коллекцией, поиском и плеером.
+
+![Основное окно LiteMusic с открытыми любимыми треками](docs/window.jpg)
+
+**Мини-плеер** с кнопкой закрепления поверх окон.
+
+![Мини-плеер LiteMusic с перемоткой, громкостью и управлением треками](docs/mini-player.jpg)
+
+*На скриншотах демонстрационная коллекция.*
+
+> [!NOTE]
+> LiteMusic запускается одним файлом `LiteMusic.exe`. Воспроизведение использует Media Foundation, который входит в состав Windows.
+
+> [!TIP]
+> Нажмите **Ctrl+M** или кнопку **Мини**, чтобы оставить на экране только плеер. Значок закрепления удерживает его поверх других окон.
 
 ## Возможности
 
