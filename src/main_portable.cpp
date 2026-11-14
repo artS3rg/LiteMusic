@@ -196,6 +196,7 @@ private:
         *previous_{}, *play_{}, *next_{}, *like_{};
     Fl_Input* search_{};
     Fl_Hold_Browser* browser_{};
+    Fl_Value_Slider *seek_{}, *volume_{};
     std::deque<Done> callbacks_;
     std::deque<Done> clicks_;
     std::mutex mutex_;

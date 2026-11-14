@@ -25,7 +25,6 @@ target_include_directories(LiteMusic PRIVATE third_party/cjson)
 target_link_libraries(LiteMusic PRIVATE fltk::fltk Threads::Threads)
 
 if(APPLE)
-    enable_language(OBJCXX)
     find_library(SYSTEM_CURL curl REQUIRED)
     set_target_properties(LiteMusic PROPERTIES
         OBJCXX_STANDARD 20 OBJCXX_STANDARD_REQUIRED YES
