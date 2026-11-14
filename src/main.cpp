@@ -542,7 +542,8 @@ private:
                                  CW_USEDEFAULT, CW_USEDEFAULT, CW_USEDEFAULT, CW_USEDEFAULT,
                                  hwnd_, nullptr, GetModuleHandleW(nullptr), nullptr);
         if (tips_) {
-            for (auto id : {search_id, previous_id, pause_id, next_id, like_id, seek_id, volume_id, mini_id, pin_id}) {
+            for (auto id : {search_id, previous_id, pause_id, next_id, like_id, seek_id, volume_id, mini_id, pin_id,
+                            shuffle_id, repeat_id}) {
                 TOOLINFOW tool{};
                 tool.cbSize = sizeof(tool);
                 tool.uFlags = TTF_IDISHWND | TTF_SUBCLASS;
@@ -570,8 +571,13 @@ private:
             place(favorites_id, 10, 85, 110, 31);
             place(playlists_id, 10, 122, 110, 31);
             place(wave_id, 10, 159, 110, 31);
-            place(shuffle_id, 10, 200, 110, 26);
-            place(repeat_id, 10, 231, 110, 26);
+            if (deck >= 263) {
+                place(shuffle_id, 10, 200, 110, 26);
+                place(repeat_id, 10, 231, 110, 26);
+            } else {
+                place(shuffle_id, 10, deck - 25, 48, 24);
+                place(repeat_id, 62, deck - 25, 58, 24);
+            }
             place(query_id, 151, 68, width - 228, 22);
             place(search_id, width - 68, 62, 54, 30);
             place(heading_id, 141, 101, width - 155, 24);
@@ -788,6 +794,11 @@ private:
             ui::glyph(dc, x, y, dpi_, *glyph, color);
         } else {
             auto label = window_text(item.hwndItem);
+            if (r.right - r.left <= px(60)) {
+                if (id == shuffle_id) label = L"Случ.";
+                if (id == repeat_id) label = repeat_ == Repeat::track ? L"↻ 1" :
+                                              repeat_ == Repeat::collection ? L"↻ ∞" : L"Повтор";
+            }
             if (glyph) {
                 ui::glyph(dc, r.left + px(nav ? 15 : 13), y, dpi_, *glyph, color);
                 r.left += px(nav ? 29 : 25);

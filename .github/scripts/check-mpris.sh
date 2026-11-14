@@ -25,8 +25,28 @@ wait_for_status() {
     exit 1
 }
 
+wait_for_position() {
+    local min=$1 max=$2
+    for (( attempt=0; attempt<40; ++attempt )); do
+        local position
+        position=$(call org.freedesktop.DBus.Properties.Get "$player" Position | sed -n 's/.*int64 \([0-9]*\).*/\1/p')
+        if [[ -n "$position" ]] && (( position >= min && position <= max )); then
+            return
+        fi
+        sleep 0.15
+    done
+    echo "LiteMusic did not reach the expected position via MPRIS" >&2
+    exit 1
+}
+
 wait_for_status Playing
+wait_for_position 150000 10000000
 call "$player.Pause"
+wait_for_status Paused
+call "$player.SetPosition" /org/mpris/MediaPlayer2/Track/local 4500000
+wait_for_position 4000000 5000000
+call "$player.Previous"
+wait_for_position 0 100000
 wait_for_status Paused
 call "$player.Play"
 wait_for_status Playing

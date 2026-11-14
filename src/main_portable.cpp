@@ -198,9 +198,6 @@ public:
 
     int run() {
         window_.show();
-        media_ = std::make_unique<MediaKeys>([this](MediaAction action, double value) {
-            post([this, action, value] { media_command(action, value); });
-        });
         if (!local_.empty()) {
             current_.name = L"Локальный аудиофайл";
             update_track();
@@ -307,11 +304,17 @@ private:
         bool modes = connected && !busy_ && ((queue_ && queue_->collection) || (visible_ && visible_->collection));
         enabled(shuffle_, modes);
         enabled(repeat_button_, modes);
-        shuffle_->color(shuffle_enabled_ ? accent : panel);
-        shuffle_->redraw();
-        repeat_button_->color(repeat_ == Repeat::off ? panel : accent);
-        repeat_button_->copy_label(repeat_ == Repeat::track ? "Повтор 1" :
-                                   repeat_ == Repeat::collection ? "Повтор ∞" : "Повтор");
+        auto shuffle_color = shuffle_enabled_ ? accent : panel;
+        if (shuffle_->color() != shuffle_color) {
+            shuffle_->color(shuffle_color);
+            shuffle_->redraw();
+        }
+        const char* repeat_label = repeat_ == Repeat::track ? "Повтор 1" :
+                                   repeat_ == Repeat::collection ? "Повтор ∞" : "Повтор";
+        if (std::string_view(repeat_button_->label()) != repeat_label) {
+            repeat_button_->color(repeat_ == Repeat::off ? panel : accent);
+            repeat_button_->copy_label(repeat_label);
+        }
         enabled(like_, connected && !busy_ && !current_.id.empty());
         enabled(seek_, active_ && snap_.duration > 0);
         play_->copy_label(desired_ ? "Пауза" : "Играть");
@@ -320,7 +323,12 @@ private:
     }
 
     void update_media_keys() {
-        if (!media_) return;
+        if (!media_) {
+            if (!media_engaged_ && !pending_) return;
+            media_ = std::make_unique<MediaKeys>([this](MediaAction action, double value) {
+                post([this, action, value] { media_command(action, value); });
+            });
+        }
         using Status = MediaState::Status;
         MediaState state;
         state.status = active_ ? (desired_ ? Status::playing : Status::paused) : Status::stopped;
@@ -345,8 +353,8 @@ private:
         case MediaAction::play: if (!desired_) toggle_play(); break;
         case MediaAction::pause: if (desired_) toggle_play(); break;
         case MediaAction::toggle: toggle_play(); break;
-        case MediaAction::next: if (!busy_ && can_next()) advance(false); break;
-        case MediaAction::previous: if (active_ || (!busy_ && has_previous())) previous(); break;
+        case MediaAction::next: if (!busy_ && can_next()) advance(false, !desired_); break;
+        case MediaAction::previous: if (active_ || (!busy_ && has_previous())) previous(!desired_); break;
         case MediaAction::stop:
             if (desired_) toggle_play();
             seek_to(0);
@@ -619,10 +627,10 @@ private:
         };
     }
 
-    void play_from(List list, size_t index, bool fresh = false, bool wrap = false) {
+    void play_from(List list, size_t index, bool fresh = false, bool wrap = false, bool paused = false) {
         message("Открываем аудио…");
         auto event = with_feedback(false);
-        launch([this, music = Music(token_), list = std::move(list), index, fresh, wrap, event]() mutable {
+        launch([this, music = Music(token_), list = std::move(list), index, fresh, wrap, paused, event]() mutable {
             while (index >= list.tracks.size() && list.more) {
                 if (canceled_) return Done{};
                 auto page = list.fetch(music, list.page);
@@ -632,7 +640,7 @@ private:
             if (index >= list.tracks.size()) return Done([this] { if (queue_) queue_->more = false; update_track(); });
             auto stream = music.stream(list.tracks[index].id);
             if (event) event();
-            return Done([this, list = std::move(list), index, stream, fresh]() mutable {
+            return Done([this, list = std::move(list), index, stream, fresh, paused]() mutable {
                 if (visible_ && visible_->id == list.id && visible_->page < list.page) {
                     auto selected = browser_->value();
                     visible_ = list;
@@ -643,7 +651,7 @@ private:
                 if (fresh) order_.reset();
                 radio_ = false;
                 index_ = index;
-                play_track(queue_->tracks[index_], stream);
+                play_track(queue_->tracks[index_], stream, 0, paused);
             });
         });
     }
@@ -666,23 +674,23 @@ private:
         return index_ > 0;
     }
 
-    void step_shuffle(bool forward, bool wrap) {
+    void step_shuffle(bool forward, bool wrap, bool paused) {
         if (order_) {
             auto cursor = order_->step(forward, wrap);
             if (!cursor) return;
             auto index = order_->tracks[*cursor];
-            launch([this, music = Music(token_), cursor = *cursor, index, id = queue_->tracks[index].id] {
+            launch([this, music = Music(token_), cursor = *cursor, index, paused, id = queue_->tracks[index].id] {
                 auto audio = music.stream(id);
-                return Done([this, cursor, index, audio] {
+                return Done([this, cursor, index, audio, paused] {
                     order_->cursor = cursor;
                     index_ = index;
-                    play_track(queue_->tracks[index_], audio);
+                    play_track(queue_->tracks[index_], audio, 0, paused);
                 });
             });
             return;
         }
         auto list = *queue_;
-        launch([this, music = Music(token_), list = std::move(list), current = index_, id = current_.id, wrap]() mutable {
+        launch([this, music = Music(token_), list = std::move(list), current = index_, id = current_.id, wrap, paused]() mutable {
             if (list.more) {
                 auto pages = list.collection(music, [this] { return canceled_.load(); });
                 if (canceled_) return Done{};
@@ -699,28 +707,30 @@ private:
             }
             auto order = std::make_shared<ShuffleOrder>(list.tracks.size(), selected);
             auto cursor = selected ? order->step(true, wrap) : std::optional<size_t>(0);
-            if (!cursor) return Done([this, order] {
+            if (!cursor) return Done([this, order, list = std::move(list), selected]() mutable {
+                queue_ = std::move(list);
                 order_ = order;
+                index_ = *selected;
                 message("Треки закончились");
             });
             order->cursor = *cursor;
             auto index = order->tracks[*cursor];
             auto audio = music.stream(list.tracks[index].id);
-            return Done([this, list = std::move(list), order, index, audio]() mutable {
+            return Done([this, list = std::move(list), order, index, audio, paused]() mutable {
                 queue_ = std::move(list);
                 order_ = order;
                 index_ = index;
-                play_track(queue_->tracks[index_], audio);
+                play_track(queue_->tracks[index_], audio, 0, paused);
             });
         });
     }
 
     void start_wave() { play_wave({}, 0, true, false); }
 
-    void play_wave(std::vector<Queued> list, size_t index, bool first, bool finished) {
+    void play_wave(std::vector<Queued> list, size_t index, bool first, bool finished, bool paused = false) {
         message(first ? "Запускаем Мою волну…" : "Открываем аудио…");
         auto event = with_feedback(finished);
-        launch([this, music = Music(token_), list = std::move(list), index, first, event]() mutable {
+        launch([this, music = Music(token_), list = std::move(list), index, first, event, paused]() mutable {
             if (event) event();
             if (index >= list.size()) {
                 auto batch = music.wave(list.empty() ? std::string{} : list.back().track.id);
@@ -728,7 +738,7 @@ private:
                 for (auto& item : batch.tracks) list.push_back({std::move(item), batch.batch});
             }
             auto stream = music.stream(list.at(index).track.id);
-            return Done([this, list = std::move(list), stream, index]() mutable {
+            return Done([this, list = std::move(list), stream, index, paused]() mutable {
                 auto trim = index < 32 ? 0 : index - 31;
                 list.erase(list.begin(), list.begin() + trim);
                 wave_ = std::move(list);
@@ -736,23 +746,25 @@ private:
                 radio_ = true;
                 queue_.reset();
                 order_.reset();
-                play_track(wave_[wave_index_].track, stream);
+                play_track(wave_[wave_index_].track, stream, 0, paused);
             });
         });
     }
 
-    void play_track(const Track& track, const Audio& audio, double at = 0) {
+    void play_track(const Track& track, const Audio& audio, double at = 0, bool paused = false) {
         stop();
         pending_.reset();
         current_ = track;
         update_track();
         player_.open(narrow(audio.url), at);
-        began();
+        if (paused) player_.play(false);
+        began(paused);
         save_position(at);
     }
 
-    void began() {
-        desired_ = active_ = true;
+    void began(bool paused = false) {
+        active_ = true;
+        desired_ = !paused;
         media_engaged_ = true;
         snap_ = {Playback::loading};
         started_sent_ = false;
@@ -790,28 +802,28 @@ private:
         });
     }
 
-    void previous() {
+    void previous(bool paused = false) {
         if (active_ && (snap_.position > 3 || busy_ || !has_previous())) {
             seek_to(0);
             return;
         }
         if (busy_) return;
-        if (radio_ && wave_index_ > 0) play_wave(wave_, wave_index_ - 1, false, false);
-        else if (collection_mode() && shuffle_enabled_ && order_) step_shuffle(false, false);
-        else if (queue_ && has_previous()) play_from(*queue_, index_ - 1);
+        if (radio_ && wave_index_ > 0) play_wave(wave_, wave_index_ - 1, false, false, paused);
+        else if (collection_mode() && shuffle_enabled_ && order_) step_shuffle(false, false, paused);
+        else if (queue_ && has_previous()) play_from(*queue_, index_ - 1, false, false, paused);
     }
 
-    void advance(bool finished) {
+    void advance(bool finished, bool paused = false) {
         if (busy_) {
             if (finished) deferred_end_ = true;
             return;
         }
         bool wrap = collection_mode() && repeat_ == Repeat::collection;
-        if (radio_) play_wave(wave_, wave_index_ + 1, false, finished);
+        if (radio_) play_wave(wave_, wave_index_ + 1, false, finished, paused);
         else if (finished && collection_mode() && repeat_ == Repeat::track) play_from(*queue_, index_);
         else if (can_next()) {
-            if (collection_mode() && shuffle_enabled_) step_shuffle(true, wrap);
-            else play_from(*queue_, index_ + 1, false, wrap);
+            if (collection_mode() && shuffle_enabled_) step_shuffle(true, wrap, paused);
+            else play_from(*queue_, index_ + 1, false, wrap, paused);
         } else if (finished && !current_.id.empty()) {
             save_position(0);
             pending_ = ResumeTrack{profile_.uid, current_, 0};

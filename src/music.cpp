@@ -231,6 +231,7 @@ CollectionPages Music::favorite_pages(const std::string& uid, std::optional<size
             body += "track-ids=" + encode(digits(album) ? id + ":" + album : id);
         }
         auto& list = pages.emplace_back(TracksPage{{}, to < total});
+        if (page) document.reset();
         if (!body.empty()) {
             auto details = request(api_host, "/tracks", token_, body);
             const cJSON* track;
