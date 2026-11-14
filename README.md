@@ -11,7 +11,7 @@
     <img alt="C++20" src="https://img.shields.io/badge/C%2B%2B-20-475569?style=flat-square">
     <a href="LICENSE"><img alt="Лицензия MIT" src="https://img.shields.io/badge/license-MIT-E2A83B?style=flat-square"></a>
   </p>
-  <p><a href="https://github.com/artS3rg/LiteMusic/releases/latest/download/LiteMusic.exe"><strong>Скачать .exe</strong></a> · <a href="#запуск">Linux и macOS</a> · <a href="#сборка">Как собрать</a> · <a href="https://github.com/artS3rg/LiteMusic/issues/new">Сообщить об ошибке</a></p>
+  <p><a href="https://github.com/artS3rg/LiteMusic/releases/latest"><strong>Скачать LiteMusic</strong></a> · <a href="#запуск">Как запустить</a> · <a href="#сборка">Как собрать</a> · <a href="https://github.com/artS3rg/LiteMusic/issues/new">Сообщить об ошибке</a></p>
 </div>
 
 ## Скриншоты
@@ -27,7 +27,7 @@
 *На скриншотах Windows и демонстрационная коллекция.*
 
 > [!NOTE]
-> LiteMusic запускается одним файлом `LiteMusic.exe`. Воспроизведение использует Media Foundation, который входит в состав Windows.
+> На Windows LiteMusic запускается одним файлом `LiteMusic.exe`. Воспроизведение использует Media Foundation, который входит в состав Windows.
 
 > [!TIP]
 > Нажмите **Ctrl+M** (**⌘M** на Mac) или кнопку **Мини**, чтобы оставить на экране только плеер. Кнопка закрепления удерживает его поверх других окон, если оконный менеджер это поддерживает.
@@ -43,13 +43,13 @@
 
 ## Запуск
 
-Первые сборки Linux и macOS можно скачать из [тестового выпуска](https://github.com/artS3rg/LiteMusic/releases/tag/v0.1.0-ports.1). Результат проверки воспроизведения доступен в [GitHub Actions](https://github.com/artS3rg/LiteMusic/actions/runs/43623806075).
+Сборки всех платформ доступны в [последнем выпуске](https://github.com/artS3rg/LiteMusic/releases/latest). Выберите файл для своей системы в разделе **Assets**.
 
 | Система | Как запустить |
 |---|---|
-| Windows 10/11 x64 | Скачайте **LiteMusic.exe** из [выпуска](https://github.com/artS3rg/LiteMusic/releases/latest) и откройте. |
-| Linux x86-64 | Для Ubuntu 24.04: `sudo apt install ./LiteMusic-linux-x86_64.deb`. Затем откройте LiteMusic из меню или выполните `LiteMusic`. В `.tar.gz` лежит тот же бинарник для ручной установки; ему нужны совместимые версии системных библиотек и плагины GStreamer из зависимостей `packaging/debian-control`. Графика использует X11 или XWayland. |
-| macOS 12+ | Возьмите ZIP **arm64** для Apple Silicon или **x86_64** для Intel. Распакуйте и откройте **LiteMusic.app**. Сборки тестовые: у них нет нотариального заверения Apple. Если macOS заблокирует запуск, откройте **Системные настройки → Конфиденциальность и безопасность → Всё равно открыть**. |
+| Windows 10/11 x64 | Откройте скачанный **LiteMusic.exe**. |
+| Linux x86-64 | На Ubuntu 24.04 выполните `sudo apt install ./LiteMusic-linux-x86_64.deb`. Затем откройте LiteMusic из меню или выполните `LiteMusic`. Архив `.tar.gz` подходит для ручной установки на системах с совместимыми библиотеками и плагинами GStreamer из зависимостей `packaging/debian-control`. Графика использует X11 или XWayland. |
+| macOS 12+ | Возьмите ZIP **arm64** для Apple Silicon или **x86_64** для Intel. Распакуйте и откройте **LiteMusic.app**. У сборок пока нет нотариального заверения Apple. Если macOS заблокирует запуск, откройте **Системные настройки → Конфиденциальность и безопасность → Всё равно открыть**. |
 
 1. Откройте приложение.
 2. Нажмите **Войти**. Введите код из LiteMusic на открывшейся странице Яндекса и подтвердите вход.
