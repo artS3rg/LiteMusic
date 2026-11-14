@@ -2,7 +2,7 @@
 
 Компактный клиент Яндекс Музыки для Windows 10/11 x64. Написан на C++20 и работает с системными Win32, WinHTTP и Media Foundation. Для запуска достаточно одного файла.
 
-[Скачать LiteMusic.exe](https://github.com/artS3rg/LiteMusic/releases/latest/download/LiteMusic.exe) · [История выпусков](https://github.com/artS3rg/LiteMusic/releases) · [Сообщить об ошибке](https://github.com/artS3rg/LiteMusic/issues/new)
+[Выпуски](https://github.com/artS3rg/LiteMusic/releases) · [Как собрать](#сборка) · [Сообщить об ошибке](https://github.com/artS3rg/LiteMusic/issues/new)
 
 ## Возможности
 
@@ -15,7 +15,7 @@
 
 ## Запуск
 
-1. Скачайте и откройте **LiteMusic.exe**.
+1. Откройте **LiteMusic.exe** из выпуска или соберите его по инструкции ниже.
 2. Нажмите **Войти**. Введите код из LiteMusic на открывшейся странице Яндекса и подтвердите вход.
 3. Выберите раздел. Двойной щелчок или Enter запускает выбранный трек. Ctrl+F переводит фокус в поиск, Ctrl+M переключает мини-плеер.
 
