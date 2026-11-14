@@ -5,6 +5,7 @@ on:
     branches: [main]
     paths:
       - '.github/workflows/portable.yml'
+      - '.github/scripts/check-mpris.sh'
       - 'CMakeLists.txt'
       - 'cmake/**'
       - 'src/**'
@@ -31,7 +32,7 @@ jobs:
       - name: Install dependencies
         run: |
           sudo apt-get update -qq
-          sudo apt-get install -y --no-install-recommends ninja-build libx11-dev libxext-dev libxft-dev libxinerama-dev libxcursor-dev libxrender-dev libcurl4-openssl-dev libssl-dev uuid-dev libgstreamer1.0-dev libsecret-1-dev gstreamer1.0-plugins-base gstreamer1.0-plugins-good xvfb xauth
+          sudo apt-get install -y --no-install-recommends ninja-build libx11-dev libxext-dev libxft-dev libxinerama-dev libxcursor-dev libxrender-dev libcurl4-openssl-dev libssl-dev uuid-dev libgstreamer1.0-dev libsecret-1-dev gstreamer1.0-plugins-base gstreamer1.0-plugins-good xvfb xauth dbus-daemon libglib2.0-bin
       - name: Build, package, and verify playback
         run: |
           cmake -S . -B build -G Ninja -DCMAKE_BUILD_TYPE=Release
@@ -46,6 +47,8 @@ jobs:
           test ! -d extracted/usr/lib
           python3 -c 'import wave; f = wave.open("sample.wav", "wb"); f.setparams((1, 2, 16000, 0, "NONE", "")); f.writeframes(bytes(64000)); f.close()'
           xvfb-run -a extracted/usr/bin/LiteMusic --verify-audio "file://$PWD/sample.wav"
+          python3 -c 'import wave; f = wave.open("media.wav", "wb"); f.setparams((1, 2, 16000, 0, "NONE", "")); f.writeframes(bytes(384000)); f.close()'
+          dbus-run-session -- xvfb-run -a bash .github/scripts/check-mpris.sh extracted/usr/bin/LiteMusic "file://$PWD/media.wav"
           ! ldd extracted/usr/bin/LiteMusic | grep 'not found'
           tar -C stage/usr -czf dist/LiteMusic-linux-x86_64.tar.gz .
       - uses: actions/upload-artifact@v7

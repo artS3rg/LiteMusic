@@ -1,10 +1,10 @@
 Package: litemusic
-Version: 0.1.1
+Version: 0.1.2
 Architecture: amd64
 Section: sound
 Priority: optional
 Maintainer: LiteMusic contributors <59173918+artS3rg@users.noreply.github.com>
-Depends: libc6 (>= 2.38), libstdc++6 (>= 13), libcurl4t64, libssl3t64, libuuid1, libsecret-1-0, libgstreamer1.0-0, libx11-6, libxext6, libxft2, libxinerama1, libxcursor1, libxrender1, gstreamer1.0-plugins-base, gstreamer1.0-plugins-good, gstreamer1.0-pulseaudio, xdg-utils
+Depends: libc6 (>= 2.38), libstdc++6 (>= 13), libcurl4t64, libssl3t64, libuuid1, libsecret-1-0, libglib2.0-0t64, libgstreamer1.0-0, libx11-6, libxext6, libxft2, libxinerama1, libxcursor1, libxrender1, gstreamer1.0-plugins-base, gstreamer1.0-plugins-good, gstreamer1.0-pulseaudio, xdg-utils
 Recommends: gnome-keyring | kwalletmanager
 Homepage: https://github.com/artS3rg/LiteMusic
 Description: compact unofficial client for Yandex Music

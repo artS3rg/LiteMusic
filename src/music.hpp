@@ -2,6 +2,7 @@
 
 #include <cstddef>
 #include <functional>
+#include <optional>
 #include <stdexcept>
 #include <string>
 #include <string_view>
@@ -41,6 +42,8 @@ struct TracksPage {
     bool more = false;
 };
 
+using CollectionPages = std::vector<TracksPage>;
+
 class HttpError : public std::runtime_error {
 public:
     unsigned long status;
@@ -60,15 +63,19 @@ public:
     Profile profile() const;
     TracksPage search(const std::wstring& query, size_t page) const;
     TracksPage favorites(const std::string& uid, size_t page) const;
+    CollectionPages favorite_pages(const std::string& uid, const std::function<bool()>& canceled) const;
     std::vector<std::string> liked_tracks(const std::string& uid) const;
     void set_track_like(const std::string& uid, const std::string& track, bool liked) const;
     std::vector<Playlist> playlists(const std::string& uid) const;
     TracksPage playlist(const Playlist& list, size_t page) const;
+    CollectionPages playlist_pages(const Playlist& list, const std::function<bool()>& canceled) const;
     Audio stream(const std::string& track) const;
     Wave wave(const std::string& previous = {}) const;
     void wave_event(std::string_view type, const std::string& batch = {},
                     const std::string& track = {}, double played_seconds = 0) const;
 
 private:
+    CollectionPages favorite_pages(const std::string&, std::optional<size_t>, const std::function<bool()>&) const;
+    CollectionPages playlist_pages(const Playlist&, std::optional<size_t>, const std::function<bool()>&) const;
     std::string token_;
 };

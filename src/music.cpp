@@ -204,27 +204,41 @@ TracksPage Music::search(const std::wstring& query, size_t page) const {
 }
 
 TracksPage Music::favorites(const std::string& uid, size_t page) const {
+    return std::move(favorite_pages(uid, page, [] { return false; }).front());
+}
+
+CollectionPages Music::favorite_pages(const std::string& uid, const std::function<bool()>& canceled) const {
+    return favorite_pages(uid, std::nullopt, canceled);
+}
+
+CollectionPages Music::favorite_pages(const std::string& uid, std::optional<size_t> page,
+                                      const std::function<bool()>& canceled) const {
     auto document = request(api_host, track_likes_path(uid) + "?if-modified-since-revision=0", token_);
     auto items = liked_items(document);
-    size_t from = page * page_size;
-    size_t to = std::min(from + page_size, static_cast<size_t>(cJSON_GetArraySize(items)));
-    std::string body;
+    auto total = static_cast<size_t>(cJSON_GetArraySize(items));
+    auto from = page.value_or(0) * page_size;
     auto item = cJSON_GetArrayItem(items, static_cast<int>(from));
-    for (size_t i = from; i < to && item; ++i, item = item->next) {
-        auto id = value(field(item, "id"));
-        if (!digits(id)) continue;
-        auto album = value(field(item, "albumId"));
-        if (!body.empty()) body += '&';
-        body += "track-ids=" + encode(digits(album) ? id + ":" + album : id);
-    }
-    TracksPage list{{}, to < static_cast<size_t>(cJSON_GetArraySize(items))};
-    document.reset();
-    if (!body.empty()) {
-        auto details = request(api_host, "/tracks", token_, body);
-        const cJSON* track;
-        cJSON_ArrayForEach(track, result(details)) add_track(list.tracks, track);
-    }
-    return list;
+    CollectionPages pages;
+    do {
+        if (canceled()) return {};
+        auto to = std::min(from + page_size, total);
+        std::string body;
+        for (; from < to && item; ++from, item = item->next) {
+            auto id = value(field(item, "id"));
+            if (!digits(id)) continue;
+            auto album = value(field(item, "albumId"));
+            if (!body.empty()) body += '&';
+            body += "track-ids=" + encode(digits(album) ? id + ":" + album : id);
+        }
+        auto& list = pages.emplace_back(TracksPage{{}, to < total});
+        if (!body.empty()) {
+            auto details = request(api_host, "/tracks", token_, body);
+            const cJSON* track;
+            cJSON_ArrayForEach(track, result(details)) add_track(list.tracks, track);
+        }
+        from = to;
+    } while (!page && from < total);
+    return pages;
 }
 
 std::vector<std::string> Music::liked_tracks(const std::string& uid) const {
@@ -262,16 +276,29 @@ std::vector<Playlist> Music::playlists(const std::string& uid) const {
 }
 
 TracksPage Music::playlist(const Playlist& list, size_t page) const {
+    return std::move(playlist_pages(list, page, [] { return false; }).front());
+}
+
+CollectionPages Music::playlist_pages(const Playlist& list, const std::function<bool()>& canceled) const {
+    return playlist_pages(list, std::nullopt, canceled);
+}
+
+CollectionPages Music::playlist_pages(const Playlist& list, std::optional<size_t> page,
+                                      const std::function<bool()>& canceled) const {
     auto document = request(api_host, "/users/" + list.owner + "/playlists/" + list.kind, token_);
     auto items = field(result(document), "tracks");
-    TracksPage tracks;
-    size_t from = page * page_size;
-    size_t total = static_cast<size_t>(cJSON_GetArraySize(items));
-    size_t to = std::min(from + page_size, total);
+    auto from = page.value_or(0) * page_size;
+    auto total = static_cast<size_t>(cJSON_GetArraySize(items));
     auto item = cJSON_GetArrayItem(items, static_cast<int>(from));
-    for (size_t i = from; i < to && item; ++i, item = item->next) add_track(tracks.tracks, field(item, "track"));
-    tracks.more = to < total;
-    return tracks;
+    CollectionPages pages;
+    do {
+        if (canceled()) return {};
+        auto to = std::min(from + page_size, total);
+        auto& tracks = pages.emplace_back(TracksPage{{}, to < total});
+        for (; from < to && item; ++from, item = item->next) add_track(tracks.tracks, field(item, "track"));
+        from = to;
+    } while (!page && from < total);
+    return pages;
 }
 
 Audio Music::stream(const std::string& track) const {

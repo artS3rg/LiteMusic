@@ -1,6 +1,8 @@
 #include "audio.hpp"
 #include "desktop.hpp"
 #include "music.hpp"
+#include "play_order.hpp"
+#include "portable_media.hpp"
 #include "settings.hpp"
 
 #include <FL/Fl.H>
@@ -50,6 +52,7 @@ std::string row(std::wstring_view value) {
 }
 
 using FetchPage = std::function<TracksPage(const Music&, size_t)>;
+using FetchCollection = std::function<CollectionPages(const Music&, const std::function<bool()>&)>;
 
 class TrackBrowser : public Fl_Hold_Browser {
     using Fl_Hold_Browser::Fl_Hold_Browser;
@@ -65,6 +68,7 @@ class TrackBrowser : public Fl_Hold_Browser {
 struct List {
     std::vector<Track> tracks;
     FetchPage fetch;
+    FetchCollection collection;
     size_t page = 0;
     bool more = false;
     unsigned id = 0;
@@ -88,7 +92,7 @@ void feedback(const Music& music, const char* type, const Queued& item, double s
 
 class App {
 public:
-    explicit App(std::string local) : local_(std::move(local)) {
+    explicit App(std::string local, bool silent_test = false) : player_(silent_test), local_(std::move(local)) {
         Fl::scheme("gtk+");
         window_.begin();
         window_.color(base);
@@ -107,10 +111,23 @@ public:
         top_ = new Fl_Group(0, 44, width, height - mini_height - 44);
         account_ = label(12, 48, 466, 29, "Яндекс Музыка", 13, dim);
         favorites_ = button(12, 85, 118, 30, "Любимые", [this] {
-            load_list([uid = profile_.uid](const Music& m, size_t page) { return m.favorites(uid, page); });
+            auto uid = profile_.uid;
+            load_list([uid](const Music& m, size_t page) { return m.favorites(uid, page); },
+                      [uid](const Music& m, const auto& canceled) { return m.favorite_pages(uid, canceled); });
         });
         playlists_ = button(137, 85, 123, 30, "Плейлисты", [this] { show_playlists(); });
         wave_button_ = button(267, 85, 127, 30, "Моя волна", [this] { start_wave(); });
+        shuffle_ = button(401, 85, 76, 30, "Случайно", [this] {
+            shuffle_enabled_ = !shuffle_enabled_;
+            order_.reset();
+            refresh_controls();
+        });
+        repeat_button_ = button(484, 85, 84, 30, "Повтор", [this] {
+            repeat_ = next_repeat(repeat_);
+            refresh_controls();
+        });
+        shuffle_->tooltip("Перемешивать любимые треки и плейлисты");
+        repeat_button_->tooltip("Повтор списка, одного трека или выключен");
         search_ = new Fl_Input(12, 123, 454, 29);
         search_->color(panel);
         search_->textcolor(ink);
@@ -150,10 +167,7 @@ public:
         seek_->when(FL_WHEN_RELEASE);
         seek_->callback([](Fl_Widget*, void* p) {
             auto& self = *static_cast<App*>(p);
-            auto seconds = self.seek_->value();
-            self.player_.seek(seconds);
-            self.save_position(seconds);
-            self.last_save_ = seconds;
+            self.seek_to(self.seek_->value());
         }, this);
         volume_ = slider(442, 465, 126, 22);
         volume_->bounds(0, 100);
@@ -164,6 +178,7 @@ public:
         volume_->callback([](Fl_Widget*, void* p) {
             auto& self = *static_cast<App*>(p);
             self.set_volume();
+            self.update_media_keys();
             if (self.local_.empty() && Fl::event() == FL_RELEASE) save_volume(static_cast<int>(self.volume_->value()));
         }, this);
         deck_->end();
@@ -173,6 +188,7 @@ public:
     }
 
     ~App() {
+        media_.reset();
         canceled_ = true;
         Fl::remove_timeout(timer, this);
         if (worker_.joinable()) worker_.join();
@@ -182,6 +198,9 @@ public:
 
     int run() {
         window_.show();
+        media_ = std::make_unique<MediaKeys>([this](MediaAction action, double value) {
+            post([this, action, value] { media_command(action, value); });
+        });
         if (!local_.empty()) {
             current_.name = L"Локальный аудиофайл";
             update_track();
@@ -202,12 +221,13 @@ public:
 private:
     using Done = std::function<void()>;
     Player player_;
+    std::unique_ptr<MediaKeys> media_;
     std::string local_;
     Fl_Double_Window window_{width, height, "LiteMusic"};
     Fl_Group *top_{}, *deck_{};
     Fl_Box *brand_{}, *account_{}, *result_{}, *track_{}, *status_{}, *elapsed_{}, *duration_{}, *volume_label_{};
     Fl_Button *small_{}, *pin_{}, *sign_{}, *favorites_{}, *playlists_{}, *wave_button_{}, *search_button_{}, *more_{},
-        *previous_{}, *play_{}, *next_{}, *like_{};
+        *previous_{}, *play_{}, *next_{}, *like_{}, *shuffle_{}, *repeat_button_{};
     Fl_Input* search_{};
     Fl_Hold_Browser* browser_{};
     Fl_Value_Slider *seek_{}, *volume_{};
@@ -221,6 +241,9 @@ private:
     Profile profile_;
     std::string token_;
     std::optional<List> visible_, queue_;
+    std::shared_ptr<ShuffleOrder> order_;
+    bool shuffle_enabled_ = false;
+    Repeat repeat_ = Repeat::off;
     std::vector<Playlist> lists_;
     unsigned list_id_ = 0;
     size_t index_ = 0, wave_index_ = 0;
@@ -232,6 +255,7 @@ private:
     double last_save_ = 0;
     bool active_ = false, radio_ = false, desired_ = false, deferred_end_ = false;
     bool started_sent_ = false;
+    bool media_engaged_ = false;
 
     Fl_Button* button(int x, int y, int w, int h, const char* title, Done action, int shortcut = 0) {
         auto* b = new Fl_Button(x, y, w, h, title);
@@ -278,12 +302,64 @@ private:
         enabled(browser_, connected && !busy_);
         enabled(more_, !busy_ && visible_ && visible_->more);
         enabled(play_, active_ || (pending_ && !busy_));
-        enabled(previous_, active_ || (!busy_ && (queue_ || radio_)));
-        enabled(next_, !busy_ && ((queue_ && (index_ + 1 < queue_->tracks.size() || queue_->more)) || radio_));
+        enabled(previous_, active_ || (!busy_ && has_previous()));
+        enabled(next_, !busy_ && can_next());
+        bool modes = connected && !busy_ && ((queue_ && queue_->collection) || (visible_ && visible_->collection));
+        enabled(shuffle_, modes);
+        enabled(repeat_button_, modes);
+        shuffle_->color(shuffle_enabled_ ? accent : panel);
+        shuffle_->redraw();
+        repeat_button_->color(repeat_ == Repeat::off ? panel : accent);
+        repeat_button_->copy_label(repeat_ == Repeat::track ? "Повтор 1" :
+                                   repeat_ == Repeat::collection ? "Повтор ∞" : "Повтор");
         enabled(like_, connected && !busy_ && !current_.id.empty());
         enabled(seek_, active_ && snap_.duration > 0);
         play_->copy_label(desired_ ? "Пауза" : "Играть");
         like_->copy_label(liked(current_.id) ? "♥ Лайк" : "♡ Лайк");
+        update_media_keys();
+    }
+
+    void update_media_keys() {
+        if (!media_) return;
+        using Status = MediaState::Status;
+        MediaState state;
+        state.status = active_ ? (desired_ ? Status::playing : Status::paused) : Status::stopped;
+        state.can_play = active_ || (pending_ && !busy_);
+        state.can_pause = active_;
+        state.can_next = !busy_ && can_next();
+        state.can_previous = active_ || (!busy_ && has_previous());
+        state.can_seek = active_ && snap_.duration > 0;
+        if (media_engaged_) {
+            state.track_id = current_.id.empty() ? "local" : current_.id;
+            state.title = narrow(current_.name);
+            state.artist = narrow(current_.artists);
+            state.duration = snap_.duration;
+            state.position = snap_.position;
+        }
+        state.volume = volume_->value() / 100;
+        media_->update(std::move(state));
+    }
+
+    void media_command(MediaAction action, double value) {
+        switch (action) {
+        case MediaAction::play: if (!desired_) toggle_play(); break;
+        case MediaAction::pause: if (desired_) toggle_play(); break;
+        case MediaAction::toggle: toggle_play(); break;
+        case MediaAction::next: if (!busy_ && can_next()) advance(false); break;
+        case MediaAction::previous: if (active_ || (!busy_ && has_previous())) previous(); break;
+        case MediaAction::stop:
+            if (desired_) toggle_play();
+            seek_to(0);
+            break;
+        case MediaAction::raise: window_.show(); break;
+        case MediaAction::volume:
+            volume_->value(std::round(value * 100));
+            set_volume();
+            if (local_.empty()) save_volume(static_cast<int>(volume_->value()));
+            update_media_keys();
+            break;
+        case MediaAction::seek: seek_to(value); break;
+        }
     }
 
     void toggle_mini() {
@@ -383,8 +459,10 @@ private:
                     pending_.reset();
                     current_ = {};
                     queue_.reset();
+                    order_.reset();
                     visible_.reset();
                     radio_ = stored_ = false;
+                    media_engaged_ = false;
                     likes_.clear();
                     browser_->clear();
                     token_.clear();
@@ -457,12 +535,12 @@ private:
         result_->copy_label(visible_->tracks.empty() ? "Нет треков" : "Двойной щелчок — воспроизвести");
     }
 
-    void load_list(FetchPage fetch) {
+    void load_list(FetchPage fetch, FetchCollection collection = {}) {
         message("Загружаем треки…");
-        launch([this, fetch = std::move(fetch), music = Music(token_)] {
+        launch([this, fetch = std::move(fetch), collection = std::move(collection), music = Music(token_)] {
             auto page = fetch(music, 0);
-            return Done([this, fetch, page = std::move(page)]() mutable {
-                visible_ = List{{}, fetch, 0, false, ++list_id_};
+            return Done([this, fetch, collection, page = std::move(page)]() mutable {
+                visible_ = List{{}, fetch, collection, 0, false, ++list_id_};
                 extend(*visible_, std::move(page));
                 render_list();
                 update_track();
@@ -503,9 +581,11 @@ private:
         if (busy_ || selected < 0) return;
         auto index = static_cast<size_t>(selected);
         if (visible_) {
-            if (index < visible_->tracks.size()) play_from(*visible_, index);
+            if (index < visible_->tracks.size()) play_from(*visible_, index, true);
         } else if (index < lists_.size()) {
-            load_list([list = lists_[index]](const Music& m, size_t page) { return m.playlist(list, page); });
+            auto list = lists_[index];
+            load_list([list](const Music& m, size_t page) { return m.playlist(list, page); },
+                      [list](const Music& m, const auto& canceled) { return m.playlist_pages(list, canceled); });
         }
     }
 
@@ -539,18 +619,20 @@ private:
         };
     }
 
-    void play_from(List list, size_t index, bool finished = false) {
+    void play_from(List list, size_t index, bool fresh = false, bool wrap = false) {
         message("Открываем аудио…");
-        auto event = with_feedback(finished);
-        launch([this, music = Music(token_), list = std::move(list), index, event]() mutable {
+        auto event = with_feedback(false);
+        launch([this, music = Music(token_), list = std::move(list), index, fresh, wrap, event]() mutable {
             while (index >= list.tracks.size() && list.more) {
+                if (canceled_) return Done{};
                 auto page = list.fetch(music, list.page);
                 extend(list, std::move(page));
             }
+            if (index >= list.tracks.size() && wrap) index = 0;
             if (index >= list.tracks.size()) return Done([this] { if (queue_) queue_->more = false; update_track(); });
             auto stream = music.stream(list.tracks[index].id);
             if (event) event();
-            return Done([this, list = std::move(list), index, stream]() mutable {
+            return Done([this, list = std::move(list), index, stream, fresh]() mutable {
                 if (visible_ && visible_->id == list.id && visible_->page < list.page) {
                     auto selected = browser_->value();
                     visible_ = list;
@@ -558,9 +640,77 @@ private:
                     browser_->value(selected);
                 }
                 queue_ = std::move(list);
+                if (fresh) order_.reset();
                 radio_ = false;
                 index_ = index;
                 play_track(queue_->tracks[index_], stream);
+            });
+        });
+    }
+
+    bool collection_mode() const { return queue_ && queue_->collection; }
+
+    bool can_next() const {
+        if (radio_) return true;
+        if (!queue_) return false;
+        bool wrap = collection_mode() && repeat_ == Repeat::collection;
+        if (order_) return order_->step(true, wrap).has_value();
+        if (collection_mode() && shuffle_enabled_) return wrap || queue_->more || queue_->tracks.size() > 1;
+        return wrap || index_ + 1 < queue_->tracks.size() || queue_->more;
+    }
+
+    bool has_previous() const {
+        if (radio_) return wave_index_ > 0;
+        if (!queue_) return false;
+        if (collection_mode() && shuffle_enabled_) return order_ && order_->step(false, false).has_value();
+        return index_ > 0;
+    }
+
+    void step_shuffle(bool forward, bool wrap) {
+        if (order_) {
+            auto cursor = order_->step(forward, wrap);
+            if (!cursor) return;
+            auto index = order_->tracks[*cursor];
+            launch([this, music = Music(token_), cursor = *cursor, index, id = queue_->tracks[index].id] {
+                auto audio = music.stream(id);
+                return Done([this, cursor, index, audio] {
+                    order_->cursor = cursor;
+                    index_ = index;
+                    play_track(queue_->tracks[index_], audio);
+                });
+            });
+            return;
+        }
+        auto list = *queue_;
+        launch([this, music = Music(token_), list = std::move(list), current = index_, id = current_.id, wrap]() mutable {
+            if (list.more) {
+                auto pages = list.collection(music, [this] { return canceled_.load(); });
+                if (canceled_) return Done{};
+                list.tracks.clear();
+                list.page = 0;
+                for (auto& page : pages) extend(list, std::move(page));
+            }
+            if (list.tracks.empty()) return Done([this] { message("Треки закончились"); });
+            std::optional<size_t> selected;
+            if (current < list.tracks.size() && list.tracks[current].id == id) selected = current;
+            else {
+                auto found = std::find_if(list.tracks.begin(), list.tracks.end(), [&](const Track& track) { return track.id == id; });
+                if (found != list.tracks.end()) selected = size_t(found - list.tracks.begin());
+            }
+            auto order = std::make_shared<ShuffleOrder>(list.tracks.size(), selected);
+            auto cursor = selected ? order->step(true, wrap) : std::optional<size_t>(0);
+            if (!cursor) return Done([this, order] {
+                order_ = order;
+                message("Треки закончились");
+            });
+            order->cursor = *cursor;
+            auto index = order->tracks[*cursor];
+            auto audio = music.stream(list.tracks[index].id);
+            return Done([this, list = std::move(list), order, index, audio]() mutable {
+                queue_ = std::move(list);
+                order_ = order;
+                index_ = index;
+                play_track(queue_->tracks[index_], audio);
             });
         });
     }
@@ -585,6 +735,7 @@ private:
                 wave_index_ = index - trim;
                 radio_ = true;
                 queue_.reset();
+                order_.reset();
                 play_track(wave_[wave_index_].track, stream);
             });
         });
@@ -602,6 +753,7 @@ private:
 
     void began() {
         desired_ = active_ = true;
+        media_engaged_ = true;
         snap_ = {Playback::loading};
         started_sent_ = false;
         last_save_ = 0;
@@ -639,15 +791,14 @@ private:
     }
 
     void previous() {
-        if (active_ && (snap_.position > 3 || busy_ || (!queue_ && !radio_) ||
-            (radio_ ? wave_index_ == 0 : queue_->tracks.empty() || index_ == 0))) {
-            player_.seek(0);
-            save_position(0);
+        if (active_ && (snap_.position > 3 || busy_ || !has_previous())) {
+            seek_to(0);
             return;
         }
         if (busy_) return;
         if (radio_ && wave_index_ > 0) play_wave(wave_, wave_index_ - 1, false, false);
-        else if (queue_ && index_ > 0) play_from(*queue_, index_ - 1);
+        else if (collection_mode() && shuffle_enabled_ && order_) step_shuffle(false, false);
+        else if (queue_ && has_previous()) play_from(*queue_, index_ - 1);
     }
 
     void advance(bool finished) {
@@ -655,9 +806,13 @@ private:
             if (finished) deferred_end_ = true;
             return;
         }
+        bool wrap = collection_mode() && repeat_ == Repeat::collection;
         if (radio_) play_wave(wave_, wave_index_ + 1, false, finished);
-        else if (queue_ && (index_ + 1 < queue_->tracks.size() || queue_->more)) play_from(*queue_, index_ + 1, finished);
-        else if (finished && !current_.id.empty()) {
+        else if (finished && collection_mode() && repeat_ == Repeat::track) play_from(*queue_, index_);
+        else if (can_next()) {
+            if (collection_mode() && shuffle_enabled_) step_shuffle(true, wrap);
+            else play_from(*queue_, index_ + 1, false, wrap);
+        } else if (finished && !current_.id.empty()) {
             save_position(0);
             pending_ = ResumeTrack{profile_.uid, current_, 0};
         }
@@ -667,6 +822,17 @@ private:
         auto number = volume_->value();
         player_.volume(number / 1600.0);
         volume_label_->copy_label((std::to_string(static_cast<int>(number)) + "%").c_str());
+    }
+
+    void seek_to(double seconds) {
+        if (!active_ || snap_.duration <= 0) return;
+        seconds = std::clamp(seconds, 0.0, snap_.duration);
+        player_.seek(seconds);
+        snap_.position = last_save_ = seconds;
+        save_position(seconds);
+        update_times();
+        update_media_keys();
+        if (media_) media_->seeked(seconds);
     }
 
     void save_position(double position) {
@@ -733,8 +899,9 @@ int main(int argc, char** argv) {
     try {
         Fl::lock();
         if (argc == 3 && std::string_view(argv[1]) == "--verify-audio") return verify(argv[2]);
-        auto local = argc == 3 && std::string_view(argv[1]) == "--audio-test" ? argv[2] : "";
-        App app(local);
+        auto mode = argc == 3 ? std::string_view(argv[1]) : std::string_view{};
+        auto local = mode == "--audio-test" || mode == "--verify-media-keys" ? argv[2] : "";
+        App app(local, mode == "--verify-media-keys");
         return app.run();
     } catch (const std::exception& error) {
         std::cerr << error.what() << '\n';
