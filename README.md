@@ -66,4 +66,4 @@ Start-Process .\build\LiteMusic.exe -ArgumentList '--verify-audio "C:\music\trac
 
 Код LiteMusic распространяется по лицензии [MIT](LICENSE). Встроенный cJSON также использует MIT, его уведомление приведено в [THIRD_PARTY_NOTICES](THIRD_PARTY_NOTICES).
 
-За описание неофициального API спасибо проекту [MarshalX/yandex-music-api](https://github.com/MarshalX/yandex-music-api). На оформление повлиял [Astra DS](https://github.com/Flaim92/astra-ds).
+За описание неофициального API спасибо проекту [MarshalX/yandex-music-api](https://github.com/MarshalX/yandex-music-api).
