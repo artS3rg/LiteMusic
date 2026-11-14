@@ -43,7 +43,7 @@
 
 ## Запуск
 
-Первые сборки Linux и macOS доступны в [GitHub Actions](https://github.com/artS3rg/LiteMusic/actions/workflows/portable.yml). Откройте успешный запуск и выберите архив в разделе **Artifacts**. Для скачивания артефактов нужен вход в GitHub.
+Первые сборки Linux и macOS можно скачать из [тестового выпуска](https://github.com/artS3rg/LiteMusic/releases/tag/v0.1.0-ports.1). Результат проверки воспроизведения доступен в [GitHub Actions](https://github.com/artS3rg/LiteMusic/actions/runs/43623806075).
 
 | Система | Как запустить |
 |---|---|
