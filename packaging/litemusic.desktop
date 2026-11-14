@@ -6,3 +6,4 @@ Exec=LiteMusic
 Icon=litemusic
 Categories=AudioVideo;Audio;Player;
 Terminal=false
+StartupWMClass=LiteMusic

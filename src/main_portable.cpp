@@ -92,6 +92,7 @@ public:
         Fl::scheme("gtk+");
         window_.begin();
         window_.color(base);
+        window_.xclass("LiteMusic");
         window_.callback([](Fl_Widget*, void* p) { static_cast<App*>(p)->window_.hide(); }, this);
         small_ = button(452, 12, 62, 28, "Мини", [this] { toggle_mini(); }, FL_COMMAND | 'm');
         pin_ = button(520, 12, 48, 28, "Пин", [this] {
@@ -192,7 +193,7 @@ public:
                 if (token.empty()) return Done([] {});
                 auto profile = Music(token).profile();
                 auto saved = resume();
-                return Done([this, token, profile, saved] { signed_in(token, profile, saved); });
+                return Done([this, token, profile, saved] { signed_in(token, profile, saved, true); });
             });
         }
         return Fl::run();
@@ -216,6 +217,7 @@ private:
     std::thread worker_;
     std::atomic<bool> canceled_{};
     bool busy_ = false, signing_ = false, mini_ = false, pinned_ = false;
+    bool stored_ = false;
     Profile profile_;
     std::string token_;
     std::optional<List> visible_, queue_;
@@ -373,22 +375,22 @@ private:
             return;
         }
         if (!token_.empty()) {
-            stop();
-            pending_.reset();
-            current_ = {};
-            queue_.reset();
-            visible_.reset();
-            radio_ = false;
-            likes_.clear();
-            browser_->clear();
-            update_track();
             message("Выходим…");
-            launch([this] {
-                forget_token();
-                erase_resume_track();
+            launch([this, stored = stored_] {
+                if (stored) forget_token();
                 return Done([this] {
+                    stop();
+                    pending_.reset();
+                    current_ = {};
+                    queue_.reset();
+                    visible_.reset();
+                    radio_ = stored_ = false;
+                    likes_.clear();
+                    browser_->clear();
                     token_.clear();
                     profile_ = {};
+                    erase_resume_track();
+                    update_track();
                     account_->copy_label("Яндекс Музыка");
                     result_->copy_label("");
                     message("Вы вышли из аккаунта");
@@ -416,15 +418,16 @@ private:
             bool stored = true;
             try { save_token(token); } catch (const std::exception&) { stored = false; }
             return Done([this, token, profile, stored, saved = resume()] {
-                signed_in(token, profile, saved);
+                signed_in(token, profile, saved, stored);
                 if (!stored) message("Вход до закрытия: хранилище паролей недоступно");
             });
         });
     }
 
-    void signed_in(const std::string& token, const Profile& profile, const std::optional<ResumeTrack>& saved) {
+    void signed_in(const std::string& token, const Profile& profile, const std::optional<ResumeTrack>& saved, bool stored) {
         token_ = token;
         profile_ = profile;
+        stored_ = stored;
         account_->copy_label(narrow(profile.name).c_str());
         if (saved && saved->account == profile.uid) {
             pending_ = saved;
