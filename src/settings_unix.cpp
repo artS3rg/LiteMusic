@@ -99,3 +99,6 @@ void erase_resume_track() {
     std::error_code error;
     fs::remove(dir / "last-track.json", error);
 }
+
+std::string load_discord_id() { return read("discord-application-id"); }
+void save_discord_id(const std::string& id) { write("discord-application-id", id); }

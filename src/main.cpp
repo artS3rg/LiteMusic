@@ -1,4 +1,5 @@
 #include <windows.h>
+#include "discord_presence.hpp"
 #include "music.hpp"
 #include "play_order.hpp"
 #include "media_keys.hpp"
@@ -46,7 +47,7 @@ enum Control {
     login_id = 101, query_id, search_id, favorites_id, playlists_id, wave_id, links_id,
     open_id, next_page_id, pause_id, next_id, previous_id, account_id, heading_id, now_id, status_id,
     seek_id, elapsed_id, duration_id, volume_id, volume_label_id, like_id, meta_id, mini_id, empty_id, pin_id,
-    shuffle_id, repeat_id
+    shuffle_id, repeat_id, discord_id
 };
 enum class View { none, search, favorites, playlists, playlist, wave };
 
@@ -91,6 +92,44 @@ std::wstring window_text(HWND control) {
     std::wstring result(size + 1, L'\0');
     result.resize(GetWindowTextW(control, result.data(), size + 1));
     return result;
+}
+
+INT_PTR CALLBACK discord_dialog(HWND dialog, UINT message, WPARAM wparam, LPARAM lparam) {
+    if (message == WM_INITDIALOG) {
+        auto* id = reinterpret_cast<std::string*>(lparam);
+        SetWindowLongPtrW(dialog, DWLP_USER, lparam);
+        SendDlgItemMessageW(dialog, IDC_DISCORD_ID, EM_SETLIMITTEXT, 32, 0);
+        SetDlgItemTextW(dialog, IDC_DISCORD_ID, widen(*id).c_str());
+        return TRUE;
+    }
+    if (message != WM_COMMAND) return FALSE;
+    switch (LOWORD(wparam)) {
+    case IDC_DISCORD_PORTAL:
+        ShellExecuteW(dialog, L"open", L"https://discord.com/developers/applications", nullptr, nullptr, SW_SHOWNORMAL);
+        return TRUE;
+    case IDCANCEL:
+        EndDialog(dialog, IDCANCEL);
+        return TRUE;
+    case IDOK: {
+        auto input = window_text(GetDlgItem(dialog, IDC_DISCORD_ID));
+        auto first = input.find_first_not_of(L" \t\r\n");
+        std::string id;
+        if (first != std::wstring::npos) {
+            auto last = input.find_last_not_of(L" \t\r\n");
+            auto value = input.substr(first, last - first + 1);
+            if (value.find_first_not_of(L"0123456789") == std::wstring::npos) id.assign(value.begin(), value.end());
+            if (!valid_discord_id(id)) {
+                MessageBoxW(dialog, L"Скопируйте числовой Application ID из Discord Developer Portal.",
+                            L"Статус Discord", MB_OK | MB_ICONWARNING);
+                return TRUE;
+            }
+        }
+        *reinterpret_cast<std::string*>(GetWindowLongPtrW(dialog, DWLP_USER)) = std::move(id);
+        EndDialog(dialog, IDOK);
+        return TRUE;
+    }
+    default: return FALSE;
+    }
 }
 
 std::wstring media_error(HRESULT hr) {
@@ -164,6 +203,9 @@ public:
         if (local_file_.empty()) {
             volume_ = load_volume();
             last_track_ = load_resume_track();
+            discord_application_ = load_discord_id();
+            if (!valid_discord_id(discord_application_)) discord_application_.clear();
+            discord_.configure(discord_application_);
         }
         background_brush_ = CreateSolidBrush(ui::background);
         header_brush_ = CreateSolidBrush(ui::header);
@@ -243,6 +285,8 @@ private:
     std::wstring local_file_;
     bool verify_;
     media_keys::Session media_keys_;
+    DiscordPresence discord_;
+    std::string discord_application_;
     std::optional<ResumeTrack> last_track_;
     bool resume_available_ = false;
     LONGLONG resume_position_ = 0;
@@ -447,7 +491,7 @@ private:
         for (auto id : {login_id, query_id, search_id, favorites_id, playlists_id, wave_id, links_id, open_id,
                        next_page_id, pause_id, next_id, previous_id, account_id, heading_id, now_id, status_id,
                        seek_id, elapsed_id, duration_id, volume_id, volume_label_id, like_id, meta_id, mini_id, empty_id,
-                       pin_id, shuffle_id, repeat_id}) {
+                       pin_id, shuffle_id, repeat_id, discord_id}) {
             auto window = control(id);
             if (!window) continue;
             auto font = id == heading_id || id == now_id ? title_font_ :
@@ -497,6 +541,7 @@ private:
     void create_controls() {
         constexpr auto button = WS_TABSTOP | BS_OWNERDRAW;
         make(L"BUTTON", L"Войти", button, login_id);
+        make(L"BUTTON", discord_application_.empty() ? L"Discord" : L"Discord ✓", button, discord_id);
         make(L"STATIC", L"Вход не выполнен", SS_CENTERIMAGE | SS_RIGHT | SS_ENDELLIPSIS, account_id);
         make(L"BUTTON", L"Любимые", button, favorites_id);
         make(L"BUTTON", L"Плейлисты", button, playlists_id);
@@ -567,7 +612,8 @@ private:
         auto deck = height - player_height;
         if (!mini_) {
             place(login_id, width - 86, 14, 72, 26);
-            place(account_id, 163, 13, width - 259, 28);
+            place(account_id, 163, 13, width - 340, 28);
+            place(discord_id, width - 165, 14, 73, 26);
             place(favorites_id, 10, 85, 110, 31);
             place(playlists_id, 10, 122, 110, 31);
             place(wave_id, 10, 159, 110, 31);
@@ -616,7 +662,7 @@ private:
         }
         mini_ = !mini_;
         for (auto id : {login_id, account_id, favorites_id, playlists_id, wave_id, query_id, search_id,
-                       heading_id, links_id, empty_id, open_id, next_page_id, shuffle_id, repeat_id}) {
+                       heading_id, links_id, empty_id, open_id, next_page_id, shuffle_id, repeat_id, discord_id}) {
             bool visible = !mini_ && (id != empty_id || selection() == LB_ERR);
             ShowWindow(control(id), visible ? SW_SHOWNA : SW_HIDE);
         }
@@ -756,7 +802,8 @@ private:
         const bool current = (id == favorites_id && view_ == View::favorites) ||
                              (id == playlists_id && (view_ == View::playlists || view_ == View::playlist)) ||
                              (id == wave_id && view_ == View::wave) || (id == pin_id && mini_pinned_) ||
-                             (id == shuffle_id && shuffle_) || (id == repeat_id && repeat_ != Repeat::off);
+                             (id == shuffle_id && shuffle_) || (id == repeat_id && repeat_ != Repeat::off) ||
+                             (id == discord_id && !discord_application_.empty());
         const bool disabled = (item.itemState & ODS_DISABLED) != 0;
         const bool focus = (item.itemState & ODS_FOCUS) != 0;
         const bool pressed = (item.itemState & ODS_SELECTED) != 0;
@@ -1090,6 +1137,18 @@ private:
     }
 
     void command(int id) {
+        if (id == discord_id) {
+            auto application_id = discord_application_;
+            if (DialogBoxParamW(GetModuleHandleW(nullptr), MAKEINTRESOURCEW(IDD_DISCORD), hwnd_, discord_dialog,
+                                reinterpret_cast<LPARAM>(&application_id)) == IDOK) {
+                discord_application_ = std::move(application_id);
+                save_discord_id(discord_application_);
+                discord_.configure(discord_application_);
+                set(discord_id, discord_application_.empty() ? L"Discord" : L"Discord ✓");
+                update_discord();
+            }
+            return;
+        }
         if (id == mini_id) {
             toggle_mini();
             return;
@@ -1194,6 +1253,7 @@ private:
     }
 
     void release_player() {
+        discord_.clear();
         remember_track();
         ++generation_;
         advance_pending_ = false;
@@ -1490,6 +1550,14 @@ private:
         return static_cast<double>(media_time(&IMFPMediaPlayer::GetPosition)) / ticks_per_second;
     }
 
+    void update_discord(bool seek = false) {
+        if (!playing_ || current_.id.empty()) {
+            discord_.clear();
+        } else if (!discord_application_.empty()) {
+            discord_.playing(current_, position_seconds(), static_cast<double>(duration_) / ticks_per_second, seek);
+        }
+    }
+
     void update_progress_timer() const {
         if (playing_ && !verify_ && !IsIconic(hwnd_)) SetTimer(hwnd_, progress_timer, 500, nullptr);
         else KillTimer(hwnd_, progress_timer);
@@ -1550,7 +1618,10 @@ private:
         auto next = std::exchange(queued_seek_, std::nullopt);
         if (FAILED(hr)) status(L"Перемотка недоступна для этого потока.");
         if (next && SUCCEEDED(hr)) seek_to(*next);
-        else update_progress();
+        else {
+            update_progress();
+            if (SUCCEEDED(hr)) update_discord(true);
+        }
     }
 
     void change_volume() {
@@ -1609,6 +1680,7 @@ private:
                 }
             }
             ready_ = playing_ = true;
+            update_discord();
             InvalidateRect(control(links_id), nullptr, FALSE);
             update_progress_timer();
             update_progress();
@@ -1623,6 +1695,7 @@ private:
             }
         } else if (event == MFP_EVENT_TYPE_PAUSE) {
             playing_ = false;
+            update_discord();
             InvalidateRect(control(links_id), nullptr, FALSE);
             stop_wave_clock();
             update_progress_timer();

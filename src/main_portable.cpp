@@ -1,5 +1,6 @@
 #include "audio.hpp"
 #include "desktop.hpp"
+#include "discord_presence.hpp"
 #include "music.hpp"
 #include "play_order.hpp"
 #include "portable_media.hpp"
@@ -12,6 +13,7 @@
 #include <FL/Fl_Input.H>
 #include <FL/Fl_Double_Window.H>
 #include <FL/Fl_Value_Slider.H>
+#include <FL/fl_ask.H>
 #include <FL/filename.H>
 
 #include <algorithm>
@@ -93,6 +95,11 @@ void feedback(const Music& music, const char* type, const Queued& item, double s
 class App {
 public:
     explicit App(std::string local, bool silent_test = false) : player_(silent_test), local_(std::move(local)) {
+        if (local_.empty()) {
+            discord_application_ = load_discord_id();
+            if (!valid_discord_id(discord_application_)) discord_application_.clear();
+            discord_.configure(discord_application_);
+        }
         Fl::scheme("gtk+");
         window_.begin();
         window_.color(base);
@@ -109,7 +116,10 @@ public:
         sign_ = button(485, 48, 83, 29, "Войти", [this] { sign(); });
 
         top_ = new Fl_Group(0, 44, width, height - mini_height - 44);
-        account_ = label(12, 48, 466, 29, "Яндекс Музыка", 13, dim);
+        account_ = label(12, 48, 381, 29, "Яндекс Музыка", 13, dim);
+        discord_button_ = button(401, 48, 77, 29, "Discord", [this] { discord_options(); });
+        discord_button_->tooltip("Показать трек в статусе Discord");
+        update_discord_button();
         favorites_ = button(12, 85, 118, 30, "Любимые", [this] {
             auto uid = profile_.uid;
             load_list([uid](const Music& m, size_t page) { return m.favorites(uid, page); },
@@ -218,13 +228,15 @@ public:
 private:
     using Done = std::function<void()>;
     Player player_;
+    DiscordPresence discord_;
+    std::string discord_application_;
     std::unique_ptr<MediaKeys> media_;
     std::string local_;
     Fl_Double_Window window_{width, height, "LiteMusic"};
     Fl_Group *top_{}, *deck_{};
     Fl_Box *brand_{}, *account_{}, *result_{}, *track_{}, *status_{}, *elapsed_{}, *duration_{}, *volume_label_{};
     Fl_Button *small_{}, *pin_{}, *sign_{}, *favorites_{}, *playlists_{}, *wave_button_{}, *search_button_{}, *more_{},
-        *previous_{}, *play_{}, *next_{}, *like_{}, *shuffle_{}, *repeat_button_{};
+        *previous_{}, *play_{}, *next_{}, *like_{}, *shuffle_{}, *repeat_button_{}, *discord_button_{};
     Fl_Input* search_{};
     Fl_Hold_Browser* browser_{};
     Fl_Value_Slider *seek_{}, *volume_{};
@@ -320,6 +332,69 @@ private:
         play_->copy_label(desired_ ? "Пауза" : "Играть");
         like_->copy_label(liked(current_.id) ? "♥ Лайк" : "♡ Лайк");
         update_media_keys();
+        update_discord();
+    }
+
+    void discord_options() {
+        Fl_Double_Window dialog(412, 160, "Статус Discord");
+        dialog.set_modal();
+        Fl_Box tip(12, 8, 388, 45,
+                   "Создайте приложение LiteMusic в Discord Developer Portal\nи вставьте его Application ID.");
+        tip.align(FL_ALIGN_INSIDE | FL_ALIGN_LEFT);
+        Fl_Input id(12, 56, 388, 29);
+        id.maximum_size(32);
+        id.value(discord_application_.c_str());
+        Fl_Box hint(12, 90, 388, 20, "Пустое поле отключает трансляцию статуса.");
+        hint.align(FL_ALIGN_INSIDE | FL_ALIGN_LEFT);
+        Fl_Button portal(12, 121, 137, 27, "Открыть портал");
+        portal.callback([](Fl_Widget*, void*) {
+            if (!fl_open_uri("https://discord.com/developers/applications")) {
+                fl_alert("%s", "Откройте discord.com/developers/applications в браузере.");
+            }
+        });
+        bool saved = false;
+        Fl_Button save(218, 121, 88, 27, "Сохранить");
+        save.shortcut(FL_Enter);
+        save.callback([](Fl_Widget* widget, void* data) {
+            *static_cast<bool*>(data) = true;
+            widget->window()->hide();
+        }, &saved);
+        Fl_Button cancel(312, 121, 88, 27, "Отмена");
+        cancel.shortcut(FL_Escape);
+        cancel.callback([](Fl_Widget* widget, void*) { widget->window()->hide(); });
+        dialog.end();
+        dialog.position(window_.x() + (window_.w() - dialog.w()) / 2, window_.y() + 35);
+        dialog.show();
+        id.take_focus();
+        while (dialog.shown() && window_.shown()) Fl::wait();
+        if (!saved) return;
+        std::string input = id.value();
+        auto first = input.find_first_not_of(" \t\r\n");
+        if (first == std::string::npos) input.clear();
+        else input = input.substr(first, input.find_last_not_of(" \t\r\n") - first + 1);
+        if (!input.empty() && !valid_discord_id(input)) {
+            fl_alert("%s", "Скопируйте числовой Application ID из Discord Developer Portal.");
+            return;
+        }
+        discord_application_ = std::move(input);
+        save_discord_id(discord_application_);
+        discord_.configure(discord_application_);
+        update_discord_button();
+        update_discord();
+    }
+
+    void update_discord_button() {
+        discord_button_->color(discord_application_.empty() ? panel : accent);
+        discord_button_->copy_label(discord_application_.empty() ? "Discord" : "Discord ✓");
+    }
+
+    void update_discord(bool seek = false) {
+        if (discord_application_.empty()) return;
+        if (desired_ && snap_.state == Playback::playing && !current_.id.empty()) {
+            discord_.playing(current_, snap_.position, snap_.duration, seek);
+        } else {
+            discord_.clear();
+        }
     }
 
     void update_media_keys() {
@@ -774,6 +849,7 @@ private:
     }
 
     void stop() {
+        discord_.clear();
         Fl::remove_timeout(timer, this);
         active_ = desired_ = deferred_end_ = false;
         snap_ = {};
@@ -844,6 +920,7 @@ private:
         save_position(seconds);
         update_times();
         update_media_keys();
+        update_discord(true);
         if (media_) media_->seeked(seconds);
     }
 

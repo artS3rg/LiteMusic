@@ -19,7 +19,7 @@ FetchContent_MakeAvailable(fltk)
 
 find_package(Threads REQUIRED)
 add_executable(LiteMusic MACOSX_BUNDLE
-    src/main_portable.cpp src/music.cpp src/music_unix.cpp src/settings_unix.cpp third_party/cjson/cJSON.c)
+    src/main_portable.cpp src/music.cpp src/music_unix.cpp src/discord_presence.cpp src/settings_unix.cpp third_party/cjson/cJSON.c)
 target_compile_features(LiteMusic PRIVATE cxx_std_20)
 target_include_directories(LiteMusic PRIVATE third_party/cjson)
 target_link_libraries(LiteMusic PRIVATE fltk::fltk Threads::Threads)

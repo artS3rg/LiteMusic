@@ -1,3 +1,6 @@
 #pragma once
 
 #define IDI_LITEMUSIC 101
+#define IDD_DISCORD 301
+#define IDC_DISCORD_ID 302
+#define IDC_DISCORD_PORTAL 303
