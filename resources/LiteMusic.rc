@@ -1,6 +1,20 @@
 #include "resource.h"
+#include <windows.h>
+#pragma code_page(65001)
 
 IDI_LITEMUSIC ICON "LiteMusic.ico"
 1 24 "LiteMusic.manifest"
 201 RCDATA "../LICENSE"
 202 RCDATA "../THIRD_PARTY_NOTICES"
+
+IDD_ROOM DIALOGEX 0, 0, 235, 78
+STYLE DS_SETFONT | DS_CENTER | WS_POPUP | WS_CAPTION | WS_SYSMENU
+CAPTION "Совместное прослушивание"
+FONT 9, "Segoe UI"
+BEGIN
+    LTEXT "Создайте комнату Audius или введите код друга.", IDC_ROOM_HINT, 12, 10, 210, 12
+    EDITTEXT IDC_ROOM_CODE, 12, 25, 210, 16, ES_AUTOHSCROLL
+    PUSHBUTTON "Создать комнату", IDC_ROOM_CREATE, 12, 51, 82, 15
+    DEFPUSHBUTTON "Войти", IDOK, 111, 51, 52, 15
+    PUSHBUTTON "Отмена", IDCANCEL, 169, 51, 53, 15
+END

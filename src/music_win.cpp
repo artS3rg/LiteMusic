@@ -23,16 +23,21 @@ using Internet = std::unique_ptr<void, decltype(&WinHttpCloseHandle)>;
 }
 
 HttpResponse https_request(const char* host, std::string_view path, std::string_view token,
-                           std::string_view body, bool json_body) {
-    Internet session(WinHttpOpen(L"LiteMusic/0.1", WINHTTP_ACCESS_TYPE_AUTOMATIC_PROXY,
+                           std::string_view body, bool json_body, unsigned short port, bool secure, long timeout_ms) {
+    Internet session(WinHttpOpen(L"LiteMusic/0.1", secure ? WINHTTP_ACCESS_TYPE_AUTOMATIC_PROXY : WINHTTP_ACCESS_TYPE_NO_PROXY,
                                 WINHTTP_NO_PROXY_NAME, WINHTTP_NO_PROXY_BYPASS, 0), WinHttpCloseHandle);
     if (!session) system_error("WinHTTP");
-    WinHttpSetTimeouts(session.get(), 4000, 5000, 6000, 8000);
-    Internet connection(WinHttpConnect(session.get(), widen(host).c_str(), INTERNET_DEFAULT_HTTPS_PORT, 0), WinHttpCloseHandle);
+    if (timeout_ms > 0) {
+        int timeout = static_cast<int>(timeout_ms);
+        WinHttpSetTimeouts(session.get(), timeout, timeout, timeout, timeout);
+    } else {
+        WinHttpSetTimeouts(session.get(), 4000, 5000, 6000, 8000);
+    }
+    Internet connection(WinHttpConnect(session.get(), widen(host).c_str(), port, 0), WinHttpCloseHandle);
     if (!connection) system_error("WinHttpConnect");
     auto target = widen(path);
     Internet call(WinHttpOpenRequest(connection.get(), body.empty() ? L"GET" : L"POST", target.c_str(),
-                                    nullptr, WINHTTP_NO_REFERER, WINHTTP_DEFAULT_ACCEPT_TYPES, WINHTTP_FLAG_SECURE),
+                                    nullptr, WINHTTP_NO_REFERER, WINHTTP_DEFAULT_ACCEPT_TYPES, secure ? WINHTTP_FLAG_SECURE : 0),
                   WinHttpCloseHandle);
     if (!call) system_error("WinHttpOpenRequest");
 

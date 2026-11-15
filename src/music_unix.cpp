@@ -64,13 +64,13 @@ size_t append_response(char* data, size_t size, size_t count, void* output) noex
 }
 
 HttpResponse https_request(const char* host, std::string_view path, std::string_view token,
-                           std::string_view body, bool json_body) {
+                           std::string_view body, bool json_body, unsigned short port, bool secure, long timeout_ms) {
     static const auto initialized = curl_global_init(CURL_GLOBAL_DEFAULT);
     if (initialized != CURLE_OK) throw std::runtime_error("Не удалось запустить HTTP");
     std::unique_ptr<CURL, decltype(&curl_easy_cleanup)> request(curl_easy_init(), curl_easy_cleanup);
     if (!request) throw std::runtime_error("Не удалось создать HTTP-запрос");
     auto* handle = request.get();
-    auto url = std::string("https://") + host + std::string(path);
+    auto url = std::string(secure ? "https://" : "http://") + host + ":" + std::to_string(port) + std::string(path);
     Headers headers;
     headers.add("Accept: application/json");
     headers.add("Accept-Language: ru");
@@ -89,8 +89,9 @@ HttpResponse https_request(const char* host, std::string_view path, std::string_
     curl_easy_setopt(handle, CURLOPT_USERAGENT, "LiteMusic/0.1");
     curl_easy_setopt(handle, CURLOPT_FOLLOWLOCATION, 0L);
     curl_easy_setopt(handle, CURLOPT_NOSIGNAL, 1L);
-    curl_easy_setopt(handle, CURLOPT_CONNECTTIMEOUT, 6L);
-    curl_easy_setopt(handle, CURLOPT_TIMEOUT, 15L);
+    curl_easy_setopt(handle, CURLOPT_CONNECTTIMEOUT_MS, timeout_ms > 0 ? timeout_ms : 6000L);
+    curl_easy_setopt(handle, CURLOPT_TIMEOUT_MS, timeout_ms > 0 ? timeout_ms : 15000L);
+    if (!secure) curl_easy_setopt(handle, CURLOPT_NOPROXY, "*");
     curl_easy_setopt(handle, CURLOPT_WRITEFUNCTION, append_response);
     curl_easy_setopt(handle, CURLOPT_WRITEDATA, &response);
     auto result = curl_easy_perform(handle);

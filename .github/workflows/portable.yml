@@ -9,6 +9,7 @@ on:
       - 'CMakeLists.txt'
       - 'cmake/**'
       - 'src/**'
+      - 'rooms/**'
       - 'packaging/**'
       - 'third_party/**'
       - 'docs/icon.png'
@@ -29,6 +30,8 @@ jobs:
       - uses: actions/checkout@v7
         with:
           persist-credentials: false
+      - name: Verify listening rooms
+        run: node --test rooms/server.test.mjs
       - name: Install dependencies
         run: |
           sudo apt-get update -qq

@@ -1,6 +1,8 @@
 cmake_minimum_required(VERSION 3.20)
 project(LiteMusic VERSION 0.1.4 LANGUAGES C CXX)
 
+set(LITEMUSIC_ROOMS_URL "" CACHE STRING "Public HTTPS origin for listening rooms")
+
 if(NOT WIN32)
     if(APPLE)
         enable_language(OBJCXX)
@@ -10,11 +12,12 @@ if(NOT WIN32)
 endif()
 
 enable_language(RC)
-add_executable(LiteMusic WIN32 src/main.cpp src/music.cpp src/music_win.cpp src/discord_presence.cpp src/settings.cpp third_party/cjson/cJSON.c resources/LiteMusic.rc)
+add_executable(LiteMusic WIN32 src/main.cpp src/music.cpp src/music_win.cpp src/rooms.cpp src/discord_presence.cpp src/settings.cpp third_party/cjson/cJSON.c resources/LiteMusic.rc)
 set_property(SOURCE resources/LiteMusic.rc APPEND PROPERTY OBJECT_DEPENDS
     "${CMAKE_CURRENT_SOURCE_DIR}/resources/LiteMusic.ico;${CMAKE_CURRENT_SOURCE_DIR}/resources/LiteMusic.manifest;${CMAKE_CURRENT_SOURCE_DIR}/LICENSE;${CMAKE_CURRENT_SOURCE_DIR}/THIRD_PARTY_NOTICES")
 target_compile_features(LiteMusic PRIVATE cxx_std_20)
-target_compile_definitions(LiteMusic PRIVATE UNICODE _UNICODE WIN32_LEAN_AND_MEAN NOMINMAX WINVER=0x0A00 _WIN32_WINNT=0x0A00)
+target_compile_definitions(LiteMusic PRIVATE UNICODE _UNICODE WIN32_LEAN_AND_MEAN NOMINMAX WINVER=0x0A00 _WIN32_WINNT=0x0A00
+    LITEMUSIC_ROOMS_URL="${LITEMUSIC_ROOMS_URL}")
 target_include_directories(LiteMusic PRIVATE third_party/cjson resources)
 target_link_libraries(LiteMusic PRIVATE winhttp bcrypt crypt32 advapi32 mfplay ole32 uuid shell32 comctl32 gdi32 dwmapi runtimeobject)
 if(MSVC)

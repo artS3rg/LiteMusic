@@ -2,6 +2,7 @@
 #include "desktop.hpp"
 #include "discord_presence.hpp"
 #include "music.hpp"
+#include "rooms.hpp"
 #include "play_order.hpp"
 #include "portable_media.hpp"
 #include "settings.hpp"
@@ -13,6 +14,7 @@
 #include <FL/Fl_Input.H>
 #include <FL/Fl_Double_Window.H>
 #include <FL/Fl_Value_Slider.H>
+#include <FL/fl_ask.H>
 #include <FL/filename.H>
 
 #include <algorithm>
@@ -111,7 +113,8 @@ public:
         sign_ = button(485, 48, 83, 29, "Войти", [this] { sign(); });
 
         top_ = new Fl_Group(0, 44, width, height - mini_height - 44);
-        account_ = label(12, 48, 232, 29, "Яндекс Музыка", 13, dim);
+        account_ = label(12, 48, 146, 29, "Яндекс Музыка", 13, dim);
+        room_button_ = button(165, 48, 80, 29, "Вместе", [this] { open_room(); });
         catalog_button_ = button(252, 48, 142, 29, "Яндекс Музыка ⇄", [this] { toggle_catalog(); });
         catalog_button_->tooltip("Переключить источник музыки");
         discord_button_ = button(401, 48, 77, 29, "Discord", [this] { toggle_discord(); });
@@ -197,6 +200,8 @@ public:
         media_.reset();
         canceled_ = true;
         Fl::remove_timeout(timer, this);
+        Fl::remove_timeout(room_timer, this);
+        room_.leave();
         if (worker_.joinable()) worker_.join();
         if (active_) save_position(snap_.position);
         if (local_.empty()) save_volume(static_cast<int>(volume_->value()));
@@ -225,13 +230,17 @@ private:
     using Done = std::function<void()>;
     Player player_;
     DiscordPresence discord_;
+    RoomClient room_;
+    RoomView::Mode room_mode_ = RoomView::idle;
+    std::string room_track_;
+    std::chrono::steady_clock::time_point room_next_open_{}, room_next_seek_{};
     std::unique_ptr<MediaKeys> media_;
     std::string local_;
     Fl_Double_Window window_{width, height, "LiteMusic"};
     Fl_Group *top_{}, *deck_{};
     Fl_Box *brand_{}, *account_{}, *result_{}, *track_{}, *status_{}, *elapsed_{}, *duration_{}, *volume_label_{};
     Fl_Button *small_{}, *pin_{}, *sign_{}, *favorites_{}, *playlists_{}, *wave_button_{}, *search_button_{}, *more_{},
-        *previous_{}, *play_{}, *next_{}, *like_{}, *shuffle_{}, *repeat_button_{}, *discord_button_{}, *catalog_button_{};
+        *previous_{}, *play_{}, *next_{}, *like_{}, *shuffle_{}, *repeat_button_{}, *discord_button_{}, *catalog_button_{}, *room_button_{};
     Fl_Input* search_{};
     Fl_Hold_Browser* browser_{};
     Fl_Value_Slider *seek_{}, *volume_{};
@@ -302,16 +311,18 @@ private:
         bool connected = !token_.empty();
         bool yandex = catalog_ == Catalog::yandex;
         bool browsing = can_browse();
+        bool follow = room_mode_ == RoomView::guest;
         sign_->copy_label(signing_ ? "Отмена" : connected ? "Выйти" : "Войти");
-        enabled(sign_, yandex && local_.empty() && (!busy_ || signing_));
+        enabled(sign_, !follow && yandex && local_.empty() && (!busy_ || signing_));
         enabled(catalog_button_, local_.empty() && !busy_);
-        for (auto* b : {favorites_, playlists_, wave_button_}) enabled(b, yandex && connected && !busy_);
+        enabled(room_button_, local_.empty());
+        for (auto* b : {favorites_, playlists_, wave_button_}) enabled(b, yandex && connected && !busy_ && (!follow || b != wave_button_));
         enabled(search_, browsing);
         enabled(search_button_, browsing && !busy_);
         enabled(browser_, browsing && !busy_);
         enabled(more_, !busy_ && visible_ && visible_->more);
-        enabled(play_, active_ || (pending_ && !busy_));
-        enabled(previous_, active_ || (!busy_ && has_previous()));
+        enabled(play_, !follow && (active_ || (pending_ && !busy_)));
+        enabled(previous_, !follow && (active_ || (!busy_ && has_previous())));
         enabled(next_, !busy_ && can_next());
         bool modes = yandex && connected && !busy_ && ((queue_ && queue_->collection) || (visible_ && visible_->collection));
         enabled(shuffle_, modes);
@@ -329,7 +340,7 @@ private:
         }
         bool yandex_track = current_.catalog == Catalog::yandex;
         enabled(like_, connected && !busy_ && yandex_track && !current_.id.empty());
-        enabled(seek_, active_ && snap_.duration > 0);
+        enabled(seek_, !follow && active_ && snap_.duration > 0);
         play_->copy_label(desired_ ? "Пауза" : "Играть");
         like_->copy_label(yandex_track && liked(current_.id) ? "♥ Лайк" : "♡ Лайк");
         update_media_keys();
@@ -337,6 +348,127 @@ private:
     }
 
     bool can_browse() const { return catalog_ == Catalog::audius || !token_.empty(); }
+
+    void open_room() {
+        if (!room_.available()) {
+            message("Сервер комнат пока не настроен.");
+            return;
+        }
+        auto state = room_.view();
+        if (state.mode == RoomView::connecting) {
+            room_.leave();
+            return;
+        }
+        if (state.mode == RoomView::idle) {
+            if (busy_) return;
+            int choice = fl_choice("%s", "Отмена", "Создать", "По коду",
+                                   "Совместное прослушивание Audius");
+            if (choice == 1) {
+                if (catalog_ != Catalog::audius) toggle_catalog();
+                room_.create();
+            } else if (choice == 2) {
+                auto* code = fl_input("%s", "", "Введите код комнаты");
+                if (!code) return;
+                room_.join(code);
+            } else return;
+        } else {
+            int choice = fl_choice("Код комнаты: %s", "Закрыть", "Копировать", "Выйти", state.code.c_str());
+            if (choice == 1) {
+                Fl::copy(state.code.data(), static_cast<int>(state.code.size()), 1);
+                message("Код комнаты скопирован");
+            }
+            if (choice == 2) room_.leave();
+        }
+        Fl::remove_timeout(room_timer, this);
+        tick_room();
+    }
+
+    static void room_timer(void* data) { static_cast<App*>(data)->tick_room(); }
+
+    void tick_room() {
+        auto state = room_.view();
+        auto last = std::exchange(room_mode_, state.mode);
+        if (last != state.mode) {
+            if (state.mode == RoomView::guest || last == RoomView::guest) {
+                auto feedback = state.mode == RoomView::guest && !busy_ ? with_feedback(false) : Done{};
+                if (active_) save_position(snap_.position);
+                stop();
+                queue_.reset();
+                order_.reset();
+                pending_.reset();
+                radio_ = false;
+                current_ = {};
+                room_track_.clear();
+                room_next_open_ = {};
+                room_next_seek_ = {};
+                update_track();
+                if (feedback) launch([feedback] { feedback(); return Done{}; });
+            }
+            room_button_->color(state.mode == RoomView::idle ? panel : accent);
+            room_button_->redraw();
+            if (state.mode == RoomView::host) message("Код комнаты: " + state.code);
+            if (state.mode == RoomView::guest) message("В комнате. Ждём трек ведущего…");
+            if (state.mode == RoomView::connecting) message("Подключаем комнату…");
+            if (state.mode == RoomView::idle && state.error.empty()) message("Вы вышли из комнаты");
+            refresh_controls();
+        }
+        if (state.mode == RoomView::idle) {
+            if (!state.error.empty()) message(state.error);
+            return;
+        }
+        if (state.mode == RoomView::host) {
+            std::optional<RoomPlayback> playback;
+            if (active_ && current_.catalog == Catalog::audius && !current_.id.empty() &&
+                (snap_.state == Playback::playing || snap_.state == Playback::paused)) {
+                playback = RoomPlayback{current_, snap_.position, desired_ && snap_.state == Playback::playing};
+            }
+            room_.publish(std::move(playback));
+        } else if (state.mode == RoomView::guest) {
+            follow_room(state.playback);
+        }
+        Fl::add_timeout(0.20, room_timer, this);
+    }
+
+    void follow_room(const std::optional<RoomPlayback>& playback) {
+        if (!playback) {
+            if (!room_track_.empty()) {
+                stop();
+                room_track_.clear();
+                current_ = {};
+                update_track();
+                message("Ждём трек ведущего…");
+                refresh_controls();
+            }
+            return;
+        }
+        if (busy_) return;
+        auto now = std::chrono::steady_clock::now();
+        if (room_track_ != playback->track.id || (!active_ && now >= room_next_open_)) {
+            room_track_ = playback->track.id;
+            room_next_open_ = now + 4s;
+            try {
+                play_track(playback->track, Music{}.stream(playback->track), playback->position(), true);
+            } catch (const std::exception& e) {
+                message(e.what());
+            }
+            return;
+        }
+        if (!active_ || snap_.state == Playback::loading) return;
+        if (desired_ && !playback->playing) {
+            desired_ = false;
+            player_.play(false);
+            refresh_controls();
+        }
+        if (now >= room_next_seek_ && std::abs(snap_.position - playback->position()) > 0.65) {
+            room_next_seek_ = now + 800ms;
+            seek_to(playback->position());
+        }
+        if (!desired_ && playback->playing) {
+            desired_ = true;
+            player_.play(true);
+            refresh_controls();
+        }
+    }
 
     void toggle_catalog() {
         if (busy_ || !local_.empty()) return;
@@ -390,12 +522,13 @@ private:
         }
         using Status = MediaState::Status;
         MediaState state;
+        bool follow = room_mode_ == RoomView::guest;
         state.status = active_ ? (desired_ ? Status::playing : Status::paused) : Status::stopped;
-        state.can_play = active_ || (pending_ && !busy_);
-        state.can_pause = active_;
+        state.can_play = !follow && (active_ || (pending_ && !busy_));
+        state.can_pause = !follow && active_;
         state.can_next = !busy_ && can_next();
-        state.can_previous = active_ || (!busy_ && has_previous());
-        state.can_seek = active_ && snap_.duration > 0;
+        state.can_previous = !follow && (active_ || (!busy_ && has_previous()));
+        state.can_seek = !follow && active_ && snap_.duration > 0;
         if (media_engaged_) {
             state.track_id = current_.id.empty() ? "local" :
                              current_.catalog == Catalog::audius ? "audius_" + current_.id : current_.id;
@@ -409,6 +542,7 @@ private:
     }
 
     void media_command(MediaAction action, double value) {
+        if (room_mode_ == RoomView::guest && action != MediaAction::raise && action != MediaAction::volume) return;
         switch (action) {
         case MediaAction::play: if (!desired_) toggle_play(); break;
         case MediaAction::pause: if (desired_) toggle_play(); break;
@@ -656,7 +790,7 @@ private:
 
     void open_row() {
         int selected = browser_->value() - 1;
-        if (!can_browse() || busy_ || selected < 0) return;
+        if (!can_browse() || busy_ || selected < 0 || room_mode_ == RoomView::guest) return;
         auto index = static_cast<size_t>(selected);
         if (visible_) {
             if (index < visible_->tracks.size()) play_from(*visible_, index, true);
@@ -729,6 +863,7 @@ private:
     bool collection_mode() const { return queue_ && queue_->collection; }
 
     bool can_next() const {
+        if (room_mode_ == RoomView::guest) return false;
         if (radio_) return true;
         if (!queue_) return false;
         bool wrap = collection_mode() && repeat_ == Repeat::collection;
@@ -943,7 +1078,7 @@ private:
             bool end = state.state == Playback::ended;
             active_ = desired_ = false;
             if (!end) message("Не удалось воспроизвести аудио");
-            if (end) advance(true);
+            if (end && room_mode_ != RoomView::guest) advance(true);
             refresh_controls();
             return;
         }

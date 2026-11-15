@@ -1,5 +1,6 @@
 #include <windows.h>
 #include "discord_presence.hpp"
+#include "rooms.hpp"
 #include "music.hpp"
 #include "play_order.hpp"
 #include "media_keys.hpp"
@@ -13,6 +14,7 @@
 
 #include <algorithm>
 #include <chrono>
+#include <cmath>
 #include <deque>
 #include <memory>
 #include <optional>
@@ -28,6 +30,7 @@ constexpr UINT seek_notice = WM_APP + 4;
 constexpr UINT media_key_notice = WM_APP + 5;
 constexpr UINT_PTR test_timer = 1;
 constexpr UINT_PTR progress_timer = 2;
+constexpr UINT_PTR room_timer = 3;
 constexpr LONGLONG ticks_per_second = 10'000'000;
 constexpr LONGLONG restart_threshold = 3 * ticks_per_second;
 constexpr int seek_steps = 10'000;
@@ -47,7 +50,7 @@ enum Control {
     login_id = 101, query_id, search_id, favorites_id, playlists_id, wave_id, links_id,
     open_id, next_page_id, pause_id, next_id, previous_id, account_id, heading_id, now_id, status_id,
     seek_id, elapsed_id, duration_id, volume_id, volume_label_id, like_id, meta_id, mini_id, empty_id, pin_id,
-    shuffle_id, repeat_id, discord_id, catalog_id
+    shuffle_id, repeat_id, discord_id, catalog_id, room_id
 };
 enum class View { none, search, audius_search, favorites, playlists, playlist, wave };
 
@@ -93,6 +96,54 @@ std::wstring window_text(HWND control) {
     std::wstring result(size + 1, L'\0');
     result.resize(GetWindowTextW(control, result.data(), size + 1));
     return result;
+}
+
+struct RoomDialog {
+    std::wstring code;
+    bool connected;
+};
+
+INT_PTR CALLBACK room_dialog(HWND dialog, UINT message, WPARAM wparam, LPARAM lparam) {
+    if (message == WM_INITDIALOG) {
+        auto* config = reinterpret_cast<RoomDialog*>(lparam);
+        SetWindowLongPtrW(dialog, DWLP_USER, lparam);
+        SendDlgItemMessageW(dialog, IDC_ROOM_CODE, EM_SETLIMITTEXT, 24, 0);
+        if (config->connected) {
+            SetDlgItemTextW(dialog, IDC_ROOM_HINT, L"Передайте код комнаты другу.");
+            SetDlgItemTextW(dialog, IDC_ROOM_CODE, config->code.c_str());
+            SendDlgItemMessageW(dialog, IDC_ROOM_CODE, EM_SETREADONLY, TRUE, 0);
+            SetDlgItemTextW(dialog, IDC_ROOM_CREATE, L"Копировать код");
+            SetDlgItemTextW(dialog, IDOK, L"Выйти");
+        }
+        return TRUE;
+    }
+    if (message != WM_COMMAND) return FALSE;
+    auto choice = LOWORD(wparam);
+    if (choice != IDOK && choice != IDC_ROOM_CREATE && choice != IDCANCEL) return FALSE;
+    auto* config = reinterpret_cast<RoomDialog*>(GetWindowLongPtrW(dialog, DWLP_USER));
+    if (choice == IDOK && !config->connected) config->code = window_text(GetDlgItem(dialog, IDC_ROOM_CODE));
+    EndDialog(dialog, choice);
+    return TRUE;
+}
+
+bool copy_room_code(HWND window, const std::wstring& text) {
+    auto size = (text.size() + 1) * sizeof(wchar_t);
+    auto data = GlobalAlloc(GMEM_MOVEABLE, size);
+    if (!data) return false;
+    auto destination = GlobalLock(data);
+    if (!destination) {
+        GlobalFree(data);
+        return false;
+    }
+    std::copy_n(text.c_str(), text.size() + 1, static_cast<wchar_t*>(destination));
+    GlobalUnlock(data);
+    bool copied = false;
+    if (OpenClipboard(window)) {
+        copied = EmptyClipboard() && SetClipboardData(CF_UNICODETEXT, data) != nullptr;
+        CloseClipboard();
+    }
+    if (!copied) GlobalFree(data);
+    return copied;
 }
 
 std::wstring media_error(HRESULT hr) {
@@ -247,10 +298,16 @@ private:
     bool verify_;
     media_keys::Session media_keys_;
     DiscordPresence discord_;
+    RoomClient room_;
+    RoomView::Mode room_mode_ = RoomView::idle;
+    std::chrono::steady_clock::time_point room_next_open_{};
+    std::chrono::steady_clock::time_point room_next_seek_{};
+    std::string room_track_;
     std::optional<ResumeTrack> last_track_;
     bool resume_available_ = false;
     LONGLONG resume_position_ = 0;
     bool restoring_position_ = false;
+    bool start_paused_ = false;
     std::chrono::steady_clock::time_point test_deadline_;
     std::jthread worker_;
     Job job_ = Job::none;
@@ -394,6 +451,7 @@ private:
                 return 0;
             case WM_TIMER:
                 if (wparam == progress_timer) update_progress();
+                if (wparam == room_timer) tick_room();
                 if (wparam == test_timer && verify_) {
                     if (position_seconds() >= 0.5) exit_test(0);
                     else if (std::chrono::steady_clock::now() >= test_deadline_) exit_test(6);
@@ -414,6 +472,7 @@ private:
                 if (wparam) persist_track();
                 return 0;
             case WM_DESTROY:
+                room_.leave();
                 media_keys_.close();
                 PostQuitMessage(0);
                 return 0;
@@ -452,7 +511,7 @@ private:
         for (auto id : {login_id, query_id, search_id, favorites_id, playlists_id, wave_id, links_id, open_id,
                        next_page_id, pause_id, next_id, previous_id, account_id, heading_id, now_id, status_id,
                        seek_id, elapsed_id, duration_id, volume_id, volume_label_id, like_id, meta_id, mini_id, empty_id,
-                       pin_id, shuffle_id, repeat_id, discord_id, catalog_id}) {
+                       pin_id, shuffle_id, repeat_id, discord_id, catalog_id, room_id}) {
             auto window = control(id);
             if (!window) continue;
             auto font = id == heading_id || id == now_id ? title_font_ :
@@ -503,6 +562,7 @@ private:
         constexpr auto button = WS_TABSTOP | BS_OWNERDRAW;
         make(L"BUTTON", L"Войти", button, login_id);
         make(L"BUTTON", L"Яндекс ⇄", button, catalog_id);
+        make(L"BUTTON", L"Вместе", button, room_id);
         make(L"BUTTON", discord_.enabled() ? L"Discord ✓" : L"Discord", button, discord_id);
         make(L"STATIC", L"Вход не выполнен", SS_CENTERIMAGE | SS_RIGHT | SS_ENDELLIPSIS, account_id);
         make(L"BUTTON", L"Любимые", button, favorites_id);
@@ -576,7 +636,8 @@ private:
             place(login_id, width - 86, 14, 72, 26);
             place(account_id, 163, 13, width - 340, 28);
             place(discord_id, width - 165, 14, 73, 26);
-            place(catalog_id, 10, 57, 110, 25);
+            place(catalog_id, 10, 57, 64, 25);
+            place(room_id, 77, 57, 49, 25);
             place(favorites_id, 10, 85, 110, 31);
             place(playlists_id, 10, 122, 110, 31);
             place(wave_id, 10, 159, 110, 31);
@@ -626,7 +687,7 @@ private:
         mini_ = !mini_;
         for (auto id : {login_id, account_id, favorites_id, playlists_id, wave_id, query_id, search_id,
                        heading_id, links_id, empty_id, open_id, next_page_id, shuffle_id, repeat_id, discord_id,
-                       catalog_id}) {
+                       catalog_id, room_id}) {
             bool visible = !mini_ && (id != empty_id || selection() == LB_ERR) &&
                            (id != login_id || catalog_ == Catalog::yandex);
             ShowWindow(control(id), visible ? SW_SHOWNA : SW_HIDE);
@@ -770,7 +831,8 @@ private:
                              (id == wave_id && view_ == View::wave) || (id == pin_id && mini_pinned_) ||
                              (id == shuffle_id && shuffle_) || (id == repeat_id && repeat_ != Repeat::off) ||
                              (id == discord_id && discord_.enabled()) ||
-                             (id == catalog_id && catalog_ == Catalog::audius);
+                             (id == catalog_id && catalog_ == Catalog::audius) ||
+                             (id == room_id && room_mode_ != RoomView::idle);
         const bool disabled = (item.itemState & ODS_DISABLED) != 0;
         const bool focus = (item.itemState & ODS_FOCUS) != 0;
         const bool pressed = (item.itemState & ODS_SELECTED) != 0;
@@ -829,17 +891,19 @@ private:
 
     void enable_controls() {
         bool free = job_ == Job::none;
+        bool follow = room_mode_ == RoomView::guest;
         bool enabled = !token_.empty() && free;
         bool yandex = catalog_ == Catalog::yandex;
         for (auto id : {favorites_id, playlists_id, wave_id}) {
-            EnableWindow(control(id), yandex && enabled);
+            EnableWindow(control(id), yandex && enabled && (!follow || id != wave_id));
         }
         for (auto id : {query_id, search_id}) {
             EnableWindow(control(id), free && can_browse());
         }
         EnableWindow(control(catalog_id), free && local_file_.empty());
-        EnableWindow(control(login_id), free || job_ == Job::login);
-        EnableWindow(control(open_id), free && can_browse() && selection() != LB_ERR);
+        EnableWindow(control(room_id), local_file_.empty());
+        EnableWindow(control(login_id), !follow && (free || job_ == Job::login));
+        EnableWindow(control(open_id), !follow && free && can_browse() && selection() != LB_ERR);
         EnableWindow(control(next_page_id), free && can_browse() && more_);
         auto modes = yandex && enabled && ((queue_ && queue_->source.collection()) ||
                                   view_ == View::favorites || view_ == View::playlist);
@@ -848,15 +912,15 @@ private:
         set(repeat_id, repeat_ == Repeat::collection ? L"Повтор: список" :
                        repeat_ == Repeat::track ? L"Повтор: трек" : L"Повтор: выкл.");
         const bool can_play = ready_ || (enabled && resume_available_);
-        EnableWindow(control(pause_id), can_play);
-        EnableWindow(control(seek_id), ready_ && duration_ > 0);
+        EnableWindow(control(pause_id), !follow && can_play);
+        EnableWindow(control(seek_id), !follow && ready_ && duration_ > 0);
         bool yandex_track = current_.catalog == Catalog::yandex;
         EnableWindow(control(like_id), enabled && ready_ && yandex_track && !current_.id.empty());
         set(like_id, ready_ && yandex_track && is_liked(current_.id) ? L"Убрать лайк" : L"Нравится");
-        EnableWindow(control(previous_id), free && ready_);
-        auto next = free_to_advance() && (wave_playing_ ? ready_ : has_next_track());
+        EnableWindow(control(previous_id), !follow && free && ready_);
+        auto next = !follow && free_to_advance() && (wave_playing_ ? ready_ : has_next_track());
         EnableWindow(control(next_id), next);
-        media_keys_.update(ready_ || resume_available_ || player_, playing_, next, free && ready_);
+        media_keys_.update(!follow && (ready_ || resume_available_ || player_), playing_, next, !follow && free && ready_);
         for (auto id : {favorites_id, playlists_id, wave_id, login_id, shuffle_id, repeat_id}) {
             InvalidateRect(control(id), nullptr, FALSE);
         }
@@ -1138,6 +1202,12 @@ private:
     }
 
     void command(int id) {
+        if (id == room_id) {
+            open_room();
+            return;
+        }
+        if (room_mode_ == RoomView::guest &&
+            (id == open_id || id == next_id || id == previous_id || id == pause_id || id == wave_id || id == login_id)) return;
         if (id == catalog_id && job_ == Job::none && local_file_.empty()) {
             toggle_catalog();
             return;
@@ -1227,7 +1297,7 @@ private:
     }
 
     void media_key(media_keys::SystemMediaTransportControlsButton button) {
-        if (closing_) return;
+        if (closing_ || room_mode_ == RoomView::guest) return;
         using namespace media_keys;
         switch (button) {
         case SystemMediaTransportControlsButton_Play:
@@ -1245,6 +1315,108 @@ private:
     void set_playing(bool play) {
         auto hr = play ? player_->Play() : player_->Pause();
         if (FAILED(hr)) status(media_error(hr));
+    }
+
+    void open_room() {
+        if (!room_.available()) {
+            status(L"Сервер комнат пока не настроен.");
+            return;
+        }
+        auto state = room_.view();
+        if (state.mode == RoomView::connecting) {
+            room_.leave();
+            return;
+        }
+        if (state.mode == RoomView::idle && job_ != Job::none) return;
+        RoomDialog dialog{widen(state.code), state.mode != RoomView::idle};
+        auto action = DialogBoxParamW(GetModuleHandleW(nullptr), MAKEINTRESOURCEW(IDD_ROOM), hwnd_, room_dialog,
+                                      reinterpret_cast<LPARAM>(&dialog));
+        if (dialog.connected) {
+            if (action == IDC_ROOM_CREATE && copy_room_code(hwnd_, dialog.code)) status(L"Код комнаты скопирован.");
+            if (action == IDOK) room_.leave();
+        } else if (action == IDC_ROOM_CREATE) {
+            if (catalog_ != Catalog::audius) toggle_catalog();
+            room_.create();
+        } else if (action == IDOK) {
+            room_.join(narrow(dialog.code));
+        } else return;
+        SetTimer(hwnd_, room_timer, 200, nullptr);
+        tick_room();
+    }
+
+    void tick_room() {
+        auto state = room_.view();
+        auto last = std::exchange(room_mode_, state.mode);
+        if (last != state.mode) {
+            if (state.mode == RoomView::guest || last == RoomView::guest) {
+                feedback_end("skip");
+                release_player();
+                queue_.reset();
+                reset_wave();
+                resume_available_ = false;
+                current_ = {};
+                room_track_.clear();
+                room_next_open_ = {};
+                room_next_seek_ = {};
+                show_player_idle();
+            }
+            if (state.mode == RoomView::host) status(L"Код комнаты: " + widen(state.code));
+            if (state.mode == RoomView::guest) status(L"В комнате. Ждём трек ведущего…");
+            if (state.mode == RoomView::connecting) status(L"Подключаем комнату…");
+            if (state.mode == RoomView::idle && state.error.empty()) status(L"Вы вышли из комнаты.");
+            enable_controls();
+            InvalidateRect(control(room_id), nullptr, FALSE);
+        }
+
+        if (state.mode == RoomView::idle) {
+            KillTimer(hwnd_, room_timer);
+            if (!state.error.empty()) status(widen(state.error));
+        } else if (state.mode == RoomView::host) {
+            std::optional<RoomPlayback> playback;
+            if (ready_ && current_.catalog == Catalog::audius && !current_.id.empty()) {
+                playback = RoomPlayback{current_, position_seconds(), playing_};
+            }
+            room_.publish(std::move(playback));
+        } else if (state.mode == RoomView::guest) {
+            follow_room(state.playback);
+        }
+    }
+
+    void follow_room(const std::optional<RoomPlayback>& playback) {
+        if (!playback) {
+            if (!room_track_.empty()) {
+                release_player();
+                room_track_.clear();
+                current_ = {};
+                show_player_idle();
+                status(L"Ждём трек ведущего…");
+                enable_controls();
+            }
+            return;
+        }
+        if (job_ != Job::none) return;
+        auto now = std::chrono::steady_clock::now();
+        if (room_track_ != playback->track.id || (!player_ && now >= room_next_open_)) {
+            room_track_ = playback->track.id;
+            room_next_open_ = now + std::chrono::seconds(4);
+            try {
+                start_audio(playback->track, Music{}.stream(playback->track), false, 0, true);
+            } catch (const std::exception& e) {
+                status(widen(e.what()));
+            }
+            return;
+        }
+        if (!ready_) return;
+        if (playing_ && !playback->playing) set_playing(false);
+        auto target = static_cast<LONGLONG>(playback->position() * ticks_per_second);
+        if (duration_ > 0) target = std::min(target, duration_ - 1);
+        if (seek_in_progress_) return;
+        if (now >= room_next_seek_ && std::abs(position_seconds() - double(target) / ticks_per_second) > 0.65) {
+            room_next_seek_ = now + std::chrono::milliseconds(800);
+            seek_to(target);
+            return;
+        }
+        if (!playing_ && playback->playing) set_playing(true);
     }
 
     void resume_last_track() {
@@ -1268,6 +1440,7 @@ private:
         duration_ = 0;
         resume_position_ = 0;
         restoring_position_ = false;
+        start_paused_ = false;
         adjusting_seek_ = false;
         seek_in_progress_.reset();
         queued_seek_.reset();
@@ -1292,10 +1465,11 @@ private:
         if (token_.empty()) pending_feedback_.clear();
     }
 
-    void start_audio(Track track, Audio audio, bool wave, LONGLONG start_position = 0) {
+    void start_audio(Track track, Audio audio, bool wave, LONGLONG start_position = 0, bool paused = false) {
         release_player();
         resume_available_ = false;
         resume_position_ = start_position;
+        start_paused_ = paused;
         wave_playing_ = wave;
         wave_started_ = false;
         wave_played_seconds_ = 0;
@@ -1589,6 +1763,7 @@ private:
     }
 
     void seek_scroll(unsigned notification) {
+        if (room_mode_ == RoomView::guest) return;
         if (!ready_ || duration_ <= 0) return;
         if (notification == TB_ENDTRACK && !adjusting_seek_) return;
         auto position = SendMessageW(control(seek_id), TBM_GETPOS, 0, 0);
@@ -1665,6 +1840,14 @@ private:
             reset_wave();
             status(media_error(static_cast<HRESULT>(event)));
         } else if (event == MFP_EVENT_TYPE_MEDIAITEM_SET) {
+            if (std::exchange(start_paused_, false)) {
+                ready_ = true;
+                duration_ = media_time(&IMFPMediaPlayer::GetDuration);
+                set(duration_id, duration_ > 0 ? time_label(duration_) : L"—");
+                status(L"Синхронизация с ведущим…");
+                enable_controls();
+                return;
+            }
             if (auto start = std::exchange(resume_position_, 0LL); start > 0) {
                 auto length = media_time(&IMFPMediaPlayer::GetDuration);
                 if (length == 0 || start < length - ticks_per_second) {
@@ -1675,7 +1858,7 @@ private:
             }
             set_playing(true);
         } else if (event == MFP_EVENT_TYPE_PLAY) {
-            if (!ready_) {
+            if (!ready_ || duration_ <= 0) {
                 duration_ = media_time(&IMFPMediaPlayer::GetDuration);
                 set(duration_id, duration_ > 0 ? time_label(duration_) : L"—");
                 if (duration_ > 0) {
@@ -1717,7 +1900,7 @@ private:
             release_player();
             if (last_track_) last_track_->position = 0;
             status(L"Трек закончился.");
-            advance_pending_ = wave_playing_ || repeat_track() || has_next_track();
+            advance_pending_ = room_mode_ != RoomView::guest && (wave_playing_ || repeat_track() || has_next_track());
             if (advance_pending_) advance_playback();
         }
         enable_controls();
