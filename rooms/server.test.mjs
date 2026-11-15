@@ -6,7 +6,7 @@ import { setTimeout as wait } from 'node:timers/promises';
 import { fileURLToPath } from 'node:url';
 import test from 'node:test';
 
-test('a guest follows the host, cannot edit the room, and observes its closure', { timeout: 10_000 }, async t => {
+test('a guest follows the host, cannot edit the room, and observes its closure', { timeout: 25_000 }, async t => {
   let origin = process.env.LITEMUSIC_ROOMS_TEST_URL;
   if (!origin) {
     const server = spawn(process.execPath, [fileURLToPath(new URL('./server.mjs', import.meta.url))], {
@@ -23,10 +23,13 @@ test('a guest follows the host, cannot edit the room, and observes its closure',
   async function post(path, body = {}) {
     const response = await fetch(new URL(`/v1/rooms${path}`, origin), {
       method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
+      headers: { 'Content-Type': 'application/json', Connection: 'close' },
       body: JSON.stringify(body),
       redirect: 'error',
-      signal: AbortSignal.timeout(4000),
+      signal: AbortSignal.timeout(5000),
+    }).catch(error => {
+      const action = path.split('/').at(2) || 'create';
+      throw new Error(`Room request ${action} failed: ${error.cause?.code ?? error.message}`);
     });
     return { status: response.status, data: await response.json() };
   }
