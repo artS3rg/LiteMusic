@@ -14,6 +14,13 @@ on:
       - 'third_party/**'
       - 'docs/icon.png'
   workflow_dispatch:
+    inputs:
+      rooms_url:
+        description: Public HTTPS origin for listening rooms (optional)
+        type: string
+
+env:
+  LITEMUSIC_ROOMS_URL: ${{ inputs.rooms_url }}
 
 permissions:
   contents: read
@@ -38,7 +45,7 @@ jobs:
           sudo apt-get install -y --no-install-recommends ninja-build libx11-dev libxext-dev libxft-dev libxinerama-dev libxcursor-dev libxrender-dev libcurl4-openssl-dev libssl-dev uuid-dev libgstreamer1.0-dev libsecret-1-dev gstreamer1.0-plugins-base gstreamer1.0-plugins-good xvfb xauth dbus-daemon libglib2.0-bin
       - name: Build, package, and verify playback
         run: |
-          cmake -S . -B build -G Ninja -DCMAKE_BUILD_TYPE=Release
+          cmake -S . -B build -G Ninja -DCMAKE_BUILD_TYPE=Release -DLITEMUSIC_ROOMS_URL="$LITEMUSIC_ROOMS_URL"
           cmake --build build --parallel 4
           cmake --install build --component LiteMusic --prefix "$PWD/stage/usr"
           mkdir -p dist stage/DEBIAN
@@ -75,7 +82,7 @@ jobs:
           persist-credentials: false
       - name: Build, package, and verify playback
         run: |
-          cmake -S . -B build -DCMAKE_BUILD_TYPE=Release -DCMAKE_OSX_ARCHITECTURES=${{ matrix.arch }} -DCMAKE_OSX_DEPLOYMENT_TARGET=12.0
+          cmake -S . -B build -DCMAKE_BUILD_TYPE=Release -DCMAKE_OSX_ARCHITECTURES=${{ matrix.arch }} -DCMAKE_OSX_DEPLOYMENT_TARGET=12.0 -DLITEMUSIC_ROOMS_URL="$LITEMUSIC_ROOMS_URL"
           cmake --build build --parallel 3
           codesign --force --sign - build/LiteMusic.app
           codesign --verify --strict build/LiteMusic.app
