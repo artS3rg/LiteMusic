@@ -94,44 +94,6 @@ std::wstring window_text(HWND control) {
     return result;
 }
 
-INT_PTR CALLBACK discord_dialog(HWND dialog, UINT message, WPARAM wparam, LPARAM lparam) {
-    if (message == WM_INITDIALOG) {
-        auto* id = reinterpret_cast<std::string*>(lparam);
-        SetWindowLongPtrW(dialog, DWLP_USER, lparam);
-        SendDlgItemMessageW(dialog, IDC_DISCORD_ID, EM_SETLIMITTEXT, 32, 0);
-        SetDlgItemTextW(dialog, IDC_DISCORD_ID, widen(*id).c_str());
-        return TRUE;
-    }
-    if (message != WM_COMMAND) return FALSE;
-    switch (LOWORD(wparam)) {
-    case IDC_DISCORD_PORTAL:
-        ShellExecuteW(dialog, L"open", L"https://discord.com/developers/applications", nullptr, nullptr, SW_SHOWNORMAL);
-        return TRUE;
-    case IDCANCEL:
-        EndDialog(dialog, IDCANCEL);
-        return TRUE;
-    case IDOK: {
-        auto input = window_text(GetDlgItem(dialog, IDC_DISCORD_ID));
-        auto first = input.find_first_not_of(L" \t\r\n");
-        std::string id;
-        if (first != std::wstring::npos) {
-            auto last = input.find_last_not_of(L" \t\r\n");
-            auto value = input.substr(first, last - first + 1);
-            if (value.find_first_not_of(L"0123456789") == std::wstring::npos) id.assign(value.begin(), value.end());
-            if (!valid_discord_id(id)) {
-                MessageBoxW(dialog, L"Скопируйте числовой Application ID из Discord Developer Portal.",
-                            L"Статус Discord", MB_OK | MB_ICONWARNING);
-                return TRUE;
-            }
-        }
-        *reinterpret_cast<std::string*>(GetWindowLongPtrW(dialog, DWLP_USER)) = std::move(id);
-        EndDialog(dialog, IDOK);
-        return TRUE;
-    }
-    default: return FALSE;
-    }
-}
-
 std::wstring media_error(HRESULT hr) {
     wchar_t code[16];
     swprintf(code, 16, L"0x%08lX", static_cast<unsigned long>(hr));
@@ -203,9 +165,7 @@ public:
         if (local_file_.empty()) {
             volume_ = load_volume();
             last_track_ = load_resume_track();
-            discord_application_ = load_discord_id();
-            if (!valid_discord_id(discord_application_)) discord_application_.clear();
-            discord_.configure(discord_application_);
+            discord_.set_enabled(load_discord_enabled());
         }
         background_brush_ = CreateSolidBrush(ui::background);
         header_brush_ = CreateSolidBrush(ui::header);
@@ -286,7 +246,6 @@ private:
     bool verify_;
     media_keys::Session media_keys_;
     DiscordPresence discord_;
-    std::string discord_application_;
     std::optional<ResumeTrack> last_track_;
     bool resume_available_ = false;
     LONGLONG resume_position_ = 0;
@@ -541,7 +500,7 @@ private:
     void create_controls() {
         constexpr auto button = WS_TABSTOP | BS_OWNERDRAW;
         make(L"BUTTON", L"Войти", button, login_id);
-        make(L"BUTTON", discord_application_.empty() ? L"Discord" : L"Discord ✓", button, discord_id);
+        make(L"BUTTON", discord_.enabled() ? L"Discord ✓" : L"Discord", button, discord_id);
         make(L"STATIC", L"Вход не выполнен", SS_CENTERIMAGE | SS_RIGHT | SS_ENDELLIPSIS, account_id);
         make(L"BUTTON", L"Любимые", button, favorites_id);
         make(L"BUTTON", L"Плейлисты", button, playlists_id);
@@ -803,7 +762,7 @@ private:
                              (id == playlists_id && (view_ == View::playlists || view_ == View::playlist)) ||
                              (id == wave_id && view_ == View::wave) || (id == pin_id && mini_pinned_) ||
                              (id == shuffle_id && shuffle_) || (id == repeat_id && repeat_ != Repeat::off) ||
-                             (id == discord_id && !discord_application_.empty());
+                             (id == discord_id && discord_.enabled());
         const bool disabled = (item.itemState & ODS_DISABLED) != 0;
         const bool focus = (item.itemState & ODS_FOCUS) != 0;
         const bool pressed = (item.itemState & ODS_SELECTED) != 0;
@@ -1138,15 +1097,11 @@ private:
 
     void command(int id) {
         if (id == discord_id) {
-            auto application_id = discord_application_;
-            if (DialogBoxParamW(GetModuleHandleW(nullptr), MAKEINTRESOURCEW(IDD_DISCORD), hwnd_, discord_dialog,
-                                reinterpret_cast<LPARAM>(&application_id)) == IDOK) {
-                discord_application_ = std::move(application_id);
-                save_discord_id(discord_application_);
-                discord_.configure(discord_application_);
-                set(discord_id, discord_application_.empty() ? L"Discord" : L"Discord ✓");
-                update_discord();
-            }
+            discord_.set_enabled(!discord_.enabled());
+            save_discord_enabled(discord_.enabled());
+            set(discord_id, discord_.enabled() ? L"Discord ✓" : L"Discord");
+            status(discord_.enabled() ? L"Показ трека в Discord включён." : L"Показ трека в Discord выключен.");
+            update_discord();
             return;
         }
         if (id == mini_id) {
@@ -1553,7 +1508,7 @@ private:
     void update_discord(bool seek = false) {
         if (!playing_ || current_.id.empty()) {
             discord_.clear();
-        } else if (!discord_application_.empty()) {
+        } else if (discord_.enabled()) {
             discord_.playing(current_, position_seconds(), static_cast<double>(duration_) / ticks_per_second, seek);
         }
     }

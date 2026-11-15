@@ -100,5 +100,5 @@ void erase_resume_track() {
     fs::remove(dir / "last-track.json", error);
 }
 
-std::string load_discord_id() { return read("discord-application-id"); }
-void save_discord_id(const std::string& id) { write("discord-application-id", id); }
+bool load_discord_enabled() { return read("discord-enabled") != "0"; }
+void save_discord_enabled(bool enabled) { write("discord-enabled", enabled ? "1" : "0"); }

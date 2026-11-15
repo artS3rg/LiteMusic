@@ -1,21 +1,6 @@
 #include "resource.h"
-#include <windows.h>
-#pragma code_page(65001)
 
 IDI_LITEMUSIC ICON "LiteMusic.ico"
 1 24 "LiteMusic.manifest"
 201 RCDATA "../LICENSE"
 202 RCDATA "../THIRD_PARTY_NOTICES"
-
-IDD_DISCORD DIALOGEX 0, 0, 245, 105
-STYLE DS_SETFONT | DS_CENTER | WS_POPUP | WS_CAPTION | WS_SYSMENU
-CAPTION "Статус Discord"
-FONT 9, "Segoe UI"
-BEGIN
-    LTEXT "Создайте приложение LiteMusic в Discord Developer Portal и вставьте его Application ID.", -1, 12, 10, 220, 24
-    EDITTEXT IDC_DISCORD_ID, 12, 36, 220, 16, ES_AUTOHSCROLL
-    LTEXT "Пустое поле отключает трансляцию статуса.", -1, 12, 59, 220, 11
-    PUSHBUTTON "Открыть портал", IDC_DISCORD_PORTAL, 12, 80, 84, 15
-    DEFPUSHBUTTON "Сохранить", IDOK, 121, 80, 56, 15
-    PUSHBUTTON "Отмена", IDCANCEL, 181, 80, 51, 15
-END

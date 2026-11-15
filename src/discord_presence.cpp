@@ -29,6 +29,8 @@ using namespace std::chrono;
 using Clock = steady_clock;
 constexpr auto io_timeout = 600ms;
 constexpr size_t max_payload = 64 * 1024;
+// Public identifier of LiteMusic in Discord Developer Portal.
+constexpr char application_id[] = "1571327912253333654";
 enum Opcode : std::uint32_t { handshake, frame, close_connection, ping, pong };
 
 class Pipe {
@@ -267,7 +269,6 @@ std::string command(const std::optional<Activity>& track, const std::string& non
 }
 
 struct DiscordPresence::Session {
-    std::string id;
     std::mutex mutex;
     std::condition_variable changed;
     std::optional<Activity> activity;
@@ -275,7 +276,7 @@ struct DiscordPresence::Session {
     bool closing = false;
     std::thread worker;
 
-    explicit Session(std::string id) : id(std::move(id)), worker([this] {
+    Session() : worker([this] {
         try { run(); } catch (const std::exception&) {}
     }) {}
 
@@ -324,7 +325,7 @@ struct DiscordPresence::Session {
                 continue;
             }
             if (!connected && Clock::now() >= reconnect_at) {
-                auto hello = R"({"v":1,"client_id":")" + id + "\"}";
+                auto hello = std::string(R"({"v":1,"client_id":")") + application_id + "\"}";
                 connected = pipe.open() && pipe.send(handshake, hello, Clock::now() + io_timeout) && wait_reply(pipe, {});
                 if (!connected) pipe.close();
                 else sent = 0;
@@ -366,24 +367,17 @@ struct DiscordPresence::Session {
     }
 };
 
-bool valid_discord_id(std::string_view id) {
-    return id.size() >= 17 && id.size() <= 20 && id.front() != '0' &&
-           id.find_first_not_of("0123456789") == std::string_view::npos &&
-           (id.size() < 20 || id <= "18446744073709551615");
-}
-
 DiscordPresence::DiscordPresence() = default;
 DiscordPresence::~DiscordPresence() = default;
 
-void DiscordPresence::configure(std::string application_id) {
-    if (application_id_ == application_id) return;
-    session_.reset();
-    application_id_ = valid_discord_id(application_id) ? std::move(application_id) : std::string{};
+void DiscordPresence::set_enabled(bool enabled) {
+    enabled_ = enabled;
+    if (!enabled_) clear();
 }
 
 void DiscordPresence::playing(const Track& track, double position, double duration, bool seek) {
-    if (application_id_.empty() || track.id.empty() || track.name.empty()) return;
-    if (!session_) session_ = std::make_unique<Session>(application_id_);
+    if (!enabled_ || track.id.empty() || track.name.empty()) return;
+    if (!session_) session_ = std::make_unique<Session>();
     position = std::isfinite(position) ? std::clamp(position, 0.0, 86400.0) : 0;
     duration = std::isfinite(duration) ? std::clamp(duration, 0.0, 86400.0) : 0;
     auto start = duration_cast<seconds>(system_clock::now().time_since_epoch()).count() - std::llround(position);

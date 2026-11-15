@@ -10,7 +10,7 @@ namespace {
 constexpr wchar_t key[] = L"Software\\LiteMusic";
 constexpr wchar_t volume_value[] = L"Volume";
 constexpr wchar_t resume_value[] = L"LastTrack";
-constexpr wchar_t discord_value[] = L"DiscordApplicationId";
+constexpr wchar_t discord_value[] = L"DiscordPresence";
 constexpr DWORD max_bytes = 64 * 1024;
 constexpr LONGLONG max_position = 24LL * 60 * 60 * 10'000'000;
 using Json = std::unique_ptr<cJSON, decltype(&cJSON_Delete)>;
@@ -82,14 +82,13 @@ void erase_resume_track() {
     RegDeleteKeyValueW(HKEY_CURRENT_USER, key, resume_value);
 }
 
-std::string load_discord_id() {
-    wchar_t id[21]{};
-    DWORD size = sizeof(id);
-    if (RegGetValueW(HKEY_CURRENT_USER, key, discord_value, RRF_RT_REG_SZ, nullptr, id, &size) != ERROR_SUCCESS) return {};
-    return narrow(id);
+bool load_discord_enabled() {
+    DWORD enabled{}, size = sizeof(enabled);
+    return RegGetValueW(HKEY_CURRENT_USER, key, discord_value, RRF_RT_REG_DWORD,
+                        nullptr, &enabled, &size) != ERROR_SUCCESS || enabled != 0;
 }
 
-void save_discord_id(const std::string& id) {
-    auto stored = widen(id);
-    write_value(discord_value, REG_SZ, stored.c_str(), static_cast<DWORD>((stored.size() + 1) * sizeof(wchar_t)));
+void save_discord_enabled(bool enabled) {
+    DWORD stored = enabled ? 1 : 0;
+    write_value(discord_value, REG_DWORD, &stored, sizeof(stored));
 }
