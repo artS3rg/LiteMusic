@@ -18,6 +18,10 @@ on:
       rooms_url:
         description: Public HTTPS origin for listening rooms (optional)
         type: string
+      verify_live_rooms:
+        description: Verify the public room server using the GitHub directory
+        type: boolean
+        default: false
 
 env:
   LITEMUSIC_ROOMS_URL: ${{ inputs.rooms_url }}
@@ -39,6 +43,23 @@ jobs:
           persist-credentials: false
       - name: Verify listening rooms
         run: node --test rooms/server.test.mjs
+      - name: Verify the public room server from GitHub Actions
+        if: ${{ inputs.verify_live_rooms }}
+        run: |
+          export LITEMUSIC_ROOMS_TEST_URL="$(node -e '
+            const directory = "https://raw.githubusercontent.com/artS3rg/LiteMusic/rooms-endpoint/rooms/endpoint.json";
+            fetch(directory, { redirect: "error", signal: AbortSignal.timeout(8000) }).then(async response => {
+              if (!response.ok) throw new Error(`Room directory returned HTTP ${response.status}`);
+              const { url, expires_at } = await response.json();
+              const address = new URL(url);
+              if (address.protocol !== "https:" || !Number.isFinite(expires_at) || Date.now() >= expires_at * 1000) {
+                throw new Error("The public room server has expired or has an invalid address");
+              }
+              process.stdout.write(address.origin);
+            });
+          ')"
+          test -n "$LITEMUSIC_ROOMS_TEST_URL"
+          node --test rooms/server.test.mjs
       - name: Install dependencies
         run: |
           sudo apt-get update -qq

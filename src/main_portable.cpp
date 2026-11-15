@@ -350,10 +350,6 @@ private:
     bool can_browse() const { return catalog_ == Catalog::audius || !token_.empty(); }
 
     void open_room() {
-        if (!room_.available()) {
-            message("Сервер комнат пока не настроен.");
-            return;
-        }
         auto state = room_.view();
         if (state.mode == RoomView::connecting) {
             room_.leave();

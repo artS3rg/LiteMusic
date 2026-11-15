@@ -26,7 +26,6 @@ public:
     RoomClient();
     ~RoomClient();
 
-    bool available() const;
     void create();
     void join(std::string code);
     void leave();

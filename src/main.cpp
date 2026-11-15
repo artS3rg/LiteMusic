@@ -1318,10 +1318,6 @@ private:
     }
 
     void open_room() {
-        if (!room_.available()) {
-            status(L"Сервер комнат пока не настроен.");
-            return;
-        }
         auto state = room_.view();
         if (state.mode == RoomView::connecting) {
             room_.leave();

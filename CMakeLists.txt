@@ -1,5 +1,5 @@
 cmake_minimum_required(VERSION 3.20)
-project(LiteMusic VERSION 0.1.4 LANGUAGES C CXX)
+project(LiteMusic VERSION 0.1.5 LANGUAGES C CXX)
 
 set(LITEMUSIC_ROOMS_URL "" CACHE STRING "Public HTTPS origin for listening rooms")
 

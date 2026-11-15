@@ -7,20 +7,26 @@ import { fileURLToPath } from 'node:url';
 import test from 'node:test';
 
 test('a guest follows the host, cannot edit the room, and observes its closure', { timeout: 10_000 }, async t => {
-  const server = spawn(process.execPath, [fileURLToPath(new URL('./server.mjs', import.meta.url))], {
-    env: { ...process.env, LITEMUSIC_ROOMS_BIND: '127.0.0.1', LITEMUSIC_ROOMS_PORT: '0' },
-    stdio: ['ignore', 'pipe', 'inherit'],
-  });
-  t.after(() => server.kill());
-  const lines = readline.createInterface({ input: server.stdout });
-  const [line] = await once(lines, 'line');
-  const port = line.match(/:(\d+)$/)?.[1];
-  assert.ok(port);
+  let origin = process.env.LITEMUSIC_ROOMS_TEST_URL;
+  if (!origin) {
+    const server = spawn(process.execPath, [fileURLToPath(new URL('./server.mjs', import.meta.url))], {
+      env: { ...process.env, LITEMUSIC_ROOMS_BIND: '127.0.0.1', LITEMUSIC_ROOMS_PORT: '0' },
+      stdio: ['ignore', 'pipe', 'inherit'],
+    });
+    t.after(() => server.kill());
+    const lines = readline.createInterface({ input: server.stdout });
+    const [line] = await once(lines, 'line');
+    const port = line.match(/:(\d+)$/)?.[1];
+    assert.ok(port);
+    origin = `http://127.0.0.1:${port}`;
+  }
   async function post(path, body = {}) {
-    const response = await fetch(`http://127.0.0.1:${port}/v1/rooms${path}`, {
+    const response = await fetch(new URL(`/v1/rooms${path}`, origin), {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify(body),
+      redirect: 'error',
+      signal: AbortSignal.timeout(4000),
     });
     return { status: response.status, data: await response.json() };
   }
@@ -28,6 +34,10 @@ test('a guest follows the host, cannot edit the room, and observes its closure',
   assert.equal(room.status, 201);
   const { code, host_key: key } = room.data;
   const route = '/' + code;
+  let closed = false;
+  t.after(async () => {
+    if (!closed) await post(route + '/close', { host_key: key }).catch(() => {});
+  });
   const track = { id: 'mWB22', title: 'Ambient Snow', artist: 'Blop', position_ms: 12_000, playing: true };
   const initial = await post(route + '/read');
   assert.equal(initial.data.state, null);
@@ -48,5 +58,6 @@ test('a guest follows the host, cannot edit the room, and observes its closure',
   assert.equal(paused.data.state.position_ms, 25_000);
   assert.equal(paused.data.state.playing, false);
   assert.equal((await post(route + '/close', { host_key: key })).status, 200);
+  closed = true;
   assert.equal((await post(route + '/read')).status, 404);
 });

@@ -27,9 +27,7 @@ struct Endpoint {
     bool secure = true;
 };
 
-std::optional<Endpoint> rooms_endpoint() {
-    auto* override_url = std::getenv("LITEMUSIC_ROOMS_URL");
-    std::string_view url = override_url && *override_url ? override_url : LITEMUSIC_ROOMS_URL;
+std::optional<Endpoint> parse_endpoint(std::string_view url) {
     Endpoint address;
     if (url.starts_with("https://")) url.remove_prefix(8);
     else if (url.starts_with("http://127.0.0.1:")) {
@@ -89,6 +87,28 @@ Json checked_reply(const Endpoint& target, const std::string& path, std::string_
     return reply;
 }
 
+Endpoint rooms_endpoint() {
+    auto* override_url = std::getenv("LITEMUSIC_ROOMS_URL");
+    std::string_view configured = override_url && *override_url ? override_url : LITEMUSIC_ROOMS_URL;
+    if (!configured.empty()) {
+        if (auto target = parse_endpoint(configured)) return *target;
+        throw std::runtime_error("Проверьте адрес сервера комнат.");
+    }
+
+    try {
+        auto reply = checked_reply(Endpoint{"raw.githubusercontent.com"},
+                                   "/artS3rg/LiteMusic/rooms-endpoint/rooms/endpoint.json", {});
+        auto* expires = cJSON_GetObjectItemCaseSensitive(reply.get(), "expires_at");
+        auto now = std::chrono::duration_cast<std::chrono::seconds>(
+            std::chrono::system_clock::now().time_since_epoch()).count();
+        auto target = parse_endpoint(text(reply.get(), "url"));
+        if (target && target->secure && cJSON_IsNumber(expires) && expires->valuedouble > now) return *target;
+    } catch (const std::runtime_error&) {
+        // A missing directory entry and a network error both make public rooms unavailable.
+    }
+    throw std::runtime_error("Общий сервер комнат временно недоступен.");
+}
+
 std::string body_for(std::string_view key, const std::optional<RoomPlayback>& playback, bool include_state) {
     Json body(cJSON_CreateObject(), cJSON_Delete);
     if (!body || !cJSON_AddStringToObject(body.get(), "host_key", std::string(key).c_str())) throw std::bad_alloc();
@@ -116,7 +136,6 @@ double RoomPlayback::position() const {
 }
 
 struct RoomClient::Session {
-    const std::optional<Endpoint> target = rooms_endpoint();
     mutable std::mutex mutex;
     std::condition_variable changed;
     RoomView current;
@@ -145,17 +164,22 @@ struct RoomClient::Session {
         }
         if (worker.joinable()) worker.join();
         std::lock_guard lock(mutex);
-        if (!target) {
-            current.error = "Сервер комнат не настроен.";
-            return;
-        }
         current = {RoomView::connecting};
         outgoing.reset();
         stopping = false;
         revision = 1;
         worker = std::thread([this, owner, code = std::move(code)] {
             std::string path, key, error;
+            std::optional<Endpoint> target;
             try {
+                target = rooms_endpoint();
+                {
+                    std::lock_guard guard(mutex);
+                    if (stopping) {
+                        current = {};
+                        return;
+                    }
+                }
                 if (owner) {
                     auto reply = checked_reply(*target, "/v1/rooms", "{}");
                     auto assigned = room_code(text(reply.get(), "code"));
@@ -168,10 +192,10 @@ struct RoomClient::Session {
                         std::lock_guard guard(mutex);
                         current = {RoomView::host, std::move(assigned)};
                     }
-                    host_loop(path, key);
+                    host_loop(*target, path, key);
                 } else {
                     path = "/v1/rooms/" + code;
-                    guest_loop(code, path);
+                    guest_loop(*target, code, path);
                 }
             } catch (const std::exception& e) {
                 error = e.what();
@@ -184,7 +208,7 @@ struct RoomClient::Session {
         });
     }
 
-    void host_loop(const std::string& path, const std::string& key) {
+    void host_loop(const Endpoint& target, const std::string& path, const std::string& key) {
         unsigned sent = 0;
         for (;;) {
             std::optional<RoomPlayback> playback;
@@ -196,8 +220,8 @@ struct RoomClient::Session {
                 playback = outgoing;
                 version = revision;
             }
-            auto update = [&, this] {
-                return checked_reply(*target, path + "/update", body_for(key, playback, version != sent));
+            auto update = [&] {
+                return checked_reply(target, path + "/update", body_for(key, playback, version != sent));
             };
             if (!retry_request(update)) return;
             sent = version;
@@ -217,12 +241,12 @@ struct RoomClient::Session {
         }
     }
 
-    void guest_loop(const std::string& code, const std::string& path) {
+    void guest_loop(const Endpoint& target, const std::string& code, const std::string& path) {
         for (;;) {
             Clock::time_point began;
             auto reply = retry_request([&] {
                 began = Clock::now();
-                return checked_reply(*target, path + "/read", "{}");
+                return checked_reply(target, path + "/read", "{}");
             });
             if (!reply) return;
             auto received = Clock::now();
@@ -255,7 +279,6 @@ struct RoomClient::Session {
 RoomClient::RoomClient() : session_(std::make_unique<Session>()) {}
 RoomClient::~RoomClient() = default;
 
-bool RoomClient::available() const { return session_->target.has_value(); }
 void RoomClient::create() { session_->start(true, {}); }
 void RoomClient::join(std::string code) {
     code = room_code(std::move(code));
