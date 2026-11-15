@@ -111,7 +111,9 @@ public:
         sign_ = button(485, 48, 83, 29, "Войти", [this] { sign(); });
 
         top_ = new Fl_Group(0, 44, width, height - mini_height - 44);
-        account_ = label(12, 48, 381, 29, "Яндекс Музыка", 13, dim);
+        account_ = label(12, 48, 232, 29, "Яндекс Музыка", 13, dim);
+        catalog_button_ = button(252, 48, 142, 29, "Яндекс Музыка ⇄", [this] { toggle_catalog(); });
+        catalog_button_->tooltip("Переключить источник музыки");
         discord_button_ = button(401, 48, 77, 29, "Discord", [this] { toggle_discord(); });
         update_discord_button();
         favorites_ = button(12, 85, 118, 30, "Любимые", [this] {
@@ -229,7 +231,7 @@ private:
     Fl_Group *top_{}, *deck_{};
     Fl_Box *brand_{}, *account_{}, *result_{}, *track_{}, *status_{}, *elapsed_{}, *duration_{}, *volume_label_{};
     Fl_Button *small_{}, *pin_{}, *sign_{}, *favorites_{}, *playlists_{}, *wave_button_{}, *search_button_{}, *more_{},
-        *previous_{}, *play_{}, *next_{}, *like_{}, *shuffle_{}, *repeat_button_{}, *discord_button_{};
+        *previous_{}, *play_{}, *next_{}, *like_{}, *shuffle_{}, *repeat_button_{}, *discord_button_{}, *catalog_button_{};
     Fl_Input* search_{};
     Fl_Hold_Browser* browser_{};
     Fl_Value_Slider *seek_{}, *volume_{};
@@ -242,6 +244,7 @@ private:
     bool stored_ = false;
     Profile profile_;
     std::string token_;
+    Catalog catalog_ = Catalog::yandex;
     std::optional<List> visible_, queue_;
     std::shared_ptr<ShuffleOrder> order_;
     bool shuffle_enabled_ = false;
@@ -297,16 +300,20 @@ private:
 
     void refresh_controls() {
         bool connected = !token_.empty();
+        bool yandex = catalog_ == Catalog::yandex;
+        bool browsing = can_browse();
         sign_->copy_label(signing_ ? "Отмена" : connected ? "Выйти" : "Войти");
-        enabled(sign_, local_.empty() && (!busy_ || signing_));
-        for (auto* b : {favorites_, playlists_, wave_button_, search_button_}) enabled(b, connected && !busy_);
-        enabled(search_, connected);
-        enabled(browser_, connected && !busy_);
+        enabled(sign_, yandex && local_.empty() && (!busy_ || signing_));
+        enabled(catalog_button_, local_.empty() && !busy_);
+        for (auto* b : {favorites_, playlists_, wave_button_}) enabled(b, yandex && connected && !busy_);
+        enabled(search_, browsing);
+        enabled(search_button_, browsing && !busy_);
+        enabled(browser_, browsing && !busy_);
         enabled(more_, !busy_ && visible_ && visible_->more);
         enabled(play_, active_ || (pending_ && !busy_));
         enabled(previous_, active_ || (!busy_ && has_previous()));
         enabled(next_, !busy_ && can_next());
-        bool modes = connected && !busy_ && ((queue_ && queue_->collection) || (visible_ && visible_->collection));
+        bool modes = yandex && connected && !busy_ && ((queue_ && queue_->collection) || (visible_ && visible_->collection));
         enabled(shuffle_, modes);
         enabled(repeat_button_, modes);
         auto shuffle_color = shuffle_enabled_ ? accent : panel;
@@ -320,12 +327,35 @@ private:
             repeat_button_->color(repeat_ == Repeat::off ? panel : accent);
             repeat_button_->copy_label(repeat_label);
         }
-        enabled(like_, connected && !busy_ && !current_.id.empty());
+        bool yandex_track = current_.catalog == Catalog::yandex;
+        enabled(like_, connected && !busy_ && yandex_track && !current_.id.empty());
         enabled(seek_, active_ && snap_.duration > 0);
         play_->copy_label(desired_ ? "Пауза" : "Играть");
-        like_->copy_label(liked(current_.id) ? "♥ Лайк" : "♡ Лайк");
+        like_->copy_label(yandex_track && liked(current_.id) ? "♥ Лайк" : "♡ Лайк");
         update_media_keys();
         update_discord();
+    }
+
+    bool can_browse() const { return catalog_ == Catalog::audius || !token_.empty(); }
+
+    void toggle_catalog() {
+        if (busy_ || !local_.empty()) return;
+        bool audius = catalog_ == Catalog::yandex;
+        catalog_ = audius ? Catalog::audius : Catalog::yandex;
+        catalog_button_->color(audius ? accent : panel);
+        catalog_button_->copy_label(audius ? "Audius ⇄" : "Яндекс Музыка ⇄");
+        account_->copy_label(audius ? "Поиск без входа" :
+                             profile_.name.empty() ? "Яндекс Музыка" : narrow(profile_.name).c_str());
+        if (audius) sign_->hide();
+        else sign_->show();
+        visible_.reset();
+        lists_.clear();
+        browser_->clear();
+        search_->value("");
+        search_->tooltip(audius ? "Поиск треков в Audius" : "Поиск в Яндекс Музыке");
+        result_->copy_label(audius ? "Найдите трек или исполнителя в Audius" : "");
+        refresh_controls();
+        if (can_browse()) search_->take_focus();
     }
 
     void toggle_discord() {
@@ -367,7 +397,8 @@ private:
         state.can_previous = active_ || (!busy_ && has_previous());
         state.can_seek = active_ && snap_.duration > 0;
         if (media_engaged_) {
-            state.track_id = current_.id.empty() ? "local" : current_.id;
+            state.track_id = current_.id.empty() ? "local" :
+                             current_.catalog == Catalog::audius ? "audius_" + current_.id : current_.id;
             state.title = narrow(current_.name);
             state.artist = narrow(current_.artists);
             state.duration = snap_.duration;
@@ -409,7 +440,7 @@ private:
         } else {
             top_->show();
             brand_->show();
-            sign_->show();
+            if (catalog_ == Catalog::yandex) sign_->show();
             pin_->hide();
         }
         small_->resize(452, mini_ ? 5 : 12, 62, 28);
@@ -483,6 +514,7 @@ private:
     }
 
     void sign() {
+        if (catalog_ != Catalog::yandex) return;
         if (signing_) {
             canceled_ = true;
             return;
@@ -492,14 +524,18 @@ private:
             launch([this, stored = stored_] {
                 if (stored) forget_token();
                 return Done([this] {
-                    stop();
-                    pending_.reset();
-                    current_ = {};
-                    queue_.reset();
-                    order_.reset();
+                    if (current_.catalog == Catalog::yandex) {
+                        stop();
+                        pending_.reset();
+                        current_ = {};
+                        queue_.reset();
+                        order_.reset();
+                        radio_ = false;
+                        media_engaged_ = false;
+                    }
                     visible_.reset();
-                    radio_ = stored_ = false;
-                    media_engaged_ = false;
+                    lists_.clear();
+                    stored_ = false;
                     likes_.clear();
                     browser_->clear();
                     token_.clear();
@@ -544,7 +580,7 @@ private:
         profile_ = profile;
         stored_ = stored;
         account_->copy_label(narrow(profile.name).c_str());
-        if (saved && saved->account == profile.uid) {
+        if (!active_ && !queue_ && !radio_ && saved && saved->account == profile.uid) {
             pending_ = saved;
             current_ = pending_->track;
             update_track();
@@ -559,9 +595,14 @@ private:
     }
 
     void search() {
-        if (token_.empty() || busy_) return;
+        if (!can_browse() || busy_) return;
         auto query = widen(search_->value());
-        if (!query.empty()) load_list([query](const Music& m, size_t page) { return m.search(query, page); });
+        if (query.find_first_not_of(L" \t") == std::wstring::npos) return;
+        if (catalog_ == Catalog::audius) {
+            load_list([query](const Music&, size_t page) { return Music::search_audius(query, page); });
+        } else {
+            load_list([query](const Music& m, size_t page) { return m.search(query, page); });
+        }
     }
 
     void render_list() {
@@ -615,7 +656,7 @@ private:
 
     void open_row() {
         int selected = browser_->value() - 1;
-        if (busy_ || selected < 0) return;
+        if (!can_browse() || busy_ || selected < 0) return;
         auto index = static_cast<size_t>(selected);
         if (visible_) {
             if (index < visible_->tracks.size()) play_from(*visible_, index, true);
@@ -631,7 +672,7 @@ private:
     }
 
     void like() {
-        if (busy_ || token_.empty() || current_.id.empty()) return;
+        if (busy_ || token_.empty() || current_.catalog != Catalog::yandex || current_.id.empty()) return;
         auto id = current_.id;
         bool add = !liked(id);
         launch([this, music = Music(token_), uid = profile_.uid, id, add] {
@@ -667,7 +708,7 @@ private:
             }
             if (index >= list.tracks.size() && wrap) index = 0;
             if (index >= list.tracks.size()) return Done([this] { if (queue_) queue_->more = false; update_track(); });
-            auto stream = music.stream(list.tracks[index].id);
+            auto stream = music.stream(list.tracks[index]);
             if (event) event();
             return Done([this, list = std::move(list), index, stream, fresh, paused]() mutable {
                 if (visible_ && visible_->id == list.id && visible_->page < list.page) {
@@ -813,7 +854,9 @@ private:
 
     void update_track() {
         track_->copy_label(current_.name.empty() ? "Выберите трек" : narrow(current_.name).c_str());
-        message(narrow(current_.artists));
+        std::string details = narrow(current_.artists);
+        if (current_.catalog == Catalog::audius) details += details.empty() ? "Audius" : " · Audius";
+        message(details);
     }
 
     void toggle_play() {
@@ -827,7 +870,7 @@ private:
         if (!pending_ || busy_) return;
         auto saved = *pending_;
         launch([this, music = Music(token_), saved] {
-            auto stream = music.stream(saved.track.id);
+            auto stream = music.stream(saved.track);
             return Done([this, stream, saved] { play_track(saved.track, stream, saved.position / ticks_per_second); });
         });
     }
@@ -879,7 +922,7 @@ private:
     }
 
     void save_position(double position) {
-        if (token_.empty() || current_.id.empty()) return;
+        if (token_.empty() || current_.catalog != Catalog::yandex || current_.id.empty()) return;
         save_resume_track({profile_.uid, current_, static_cast<std::int64_t>(std::max(0.0, position) * ticks_per_second)});
     }
 

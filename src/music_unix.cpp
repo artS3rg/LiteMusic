@@ -94,7 +94,7 @@ HttpResponse https_request(const char* host, std::string_view path, std::string_
     curl_easy_setopt(handle, CURLOPT_WRITEFUNCTION, append_response);
     curl_easy_setopt(handle, CURLOPT_WRITEDATA, &response);
     auto result = curl_easy_perform(handle);
-    if (result != CURLE_OK) throw std::runtime_error(std::string("Запрос к Яндексу: ") + curl_easy_strerror(result));
+    if (result != CURLE_OK) throw std::runtime_error(std::string("Запрос HTTPS: ") + curl_easy_strerror(result));
     long status = 0;
     curl_easy_getinfo(handle, CURLINFO_RESPONSE_CODE, &status);
     return {static_cast<unsigned long>(status), std::move(response)};

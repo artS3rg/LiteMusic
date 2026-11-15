@@ -52,7 +52,7 @@ HttpResponse https_request(const char* host, std::string_view path, std::string_
     if (!WinHttpSendRequest(call.get(), headers.c_str(), static_cast<DWORD>(headers.size()),
                             size ? const_cast<char*>(body.data()) : nullptr, size, size, 0) ||
         !WinHttpReceiveResponse(call.get(), nullptr)) {
-        system_error("Запрос к Яндексу");
+        system_error("Запрос HTTPS");
     }
 
     DWORD status = 0;

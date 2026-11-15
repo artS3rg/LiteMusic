@@ -11,6 +11,7 @@ using namespace std::chrono_literals;
 
 namespace {
 constexpr char api_host[] = "api.music.yandex.net";
+constexpr char audius_host[] = "api.audius.co";
 constexpr char oauth_host[] = "oauth.yandex.ru";
 constexpr std::string_view station = "/rotor/station/user:onyourwave";
 constexpr size_t page_size = 50;
@@ -53,6 +54,12 @@ std::string encode(std::string_view str) {
         }
     }
     return result;
+}
+
+bool audius_track_id(std::string_view id) {
+    return !id.empty() && id.size() <= 32 && std::all_of(id.begin(), id.end(), [](char c) {
+        return (c >= '0' && c <= '9') || (c >= 'A' && c <= 'Z') || (c >= 'a' && c <= 'z');
+    });
 }
 
 Json request(const char* host, std::string_view path, const std::string& token = {},
@@ -135,6 +142,39 @@ HttpError::HttpError(unsigned long code, std::string message)
 
 Music::Music(std::string token) : token_(std::move(token)) {
     if (token_.find_first_of("\r\n") != std::string::npos) throw std::runtime_error("Некорректный OAuth-токен");
+}
+
+TracksPage Music::search_audius(std::wstring_view query, size_t page) {
+    auto path = "/v1/tracks/search?query=" + encode(narrow(query)) + "&app_name=LiteMusic&limit=" +
+                std::to_string(page_size) + "&offset=" + std::to_string(page * page_size);
+    auto [status, response] = https_request(audius_host, path, {}, {}, false);
+    if (status == 429) throw std::runtime_error("Audius ограничил число запросов. Попробуйте чуть позже.");
+    if (status != 200) throw std::runtime_error("Audius вернул HTTP " + std::to_string(status));
+    Json root(cJSON_ParseWithLengthOpts(response.c_str(), response.size() + 1, nullptr, true), cJSON_Delete);
+    const auto* items = field(root.get(), "data");
+    if (!cJSON_IsArray(items)) throw std::runtime_error("Audius вернул ответ в неизвестном формате.");
+
+    TracksPage result;
+    result.more = cJSON_GetArraySize(items) >= static_cast<int>(page_size);
+    const cJSON* item;
+    cJSON_ArrayForEach(item, items) {
+        if (cJSON_IsFalse(field(item, "is_streamable")) || cJSON_IsFalse(field(item, "is_available")) ||
+            cJSON_IsTrue(field(item, "is_stream_gated")) || cJSON_IsTrue(field(item, "is_unlisted")) ||
+            cJSON_IsFalse(field(field(item, "access"), "stream"))) continue;
+        auto id = value(field(item, "id"));
+        auto title = value(field(item, "title"));
+        if (!audius_track_id(id) || title.empty()) continue;
+        auto artist = value(field(field(item, "user"), "name"));
+        result.tracks.push_back({std::move(id), widen(title), widen(artist), Catalog::audius});
+    }
+    return result;
+}
+
+Audio Music::stream(const Track& track) const {
+    if (track.catalog == Catalog::yandex) return stream(track.id);
+    if (!audius_track_id(track.id)) throw std::runtime_error("Некорректный идентификатор трека Audius.");
+    auto url = std::string("https://") + audius_host + "/v1/tracks/" + track.id + "/stream?app_name=LiteMusic";
+    return {widen(url), L"Audius"};
 }
 
 std::string Music::sign_in(const std::function<bool()>& canceled, const std::function<void(DeviceCode)>& notify) {

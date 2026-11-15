@@ -47,9 +47,9 @@ enum Control {
     login_id = 101, query_id, search_id, favorites_id, playlists_id, wave_id, links_id,
     open_id, next_page_id, pause_id, next_id, previous_id, account_id, heading_id, now_id, status_id,
     seek_id, elapsed_id, duration_id, volume_id, volume_label_id, like_id, meta_id, mini_id, empty_id, pin_id,
-    shuffle_id, repeat_id, discord_id
+    shuffle_id, repeat_id, discord_id, catalog_id
 };
-enum class View { none, search, favorites, playlists, playlist, wave };
+enum class View { none, search, audius_search, favorites, playlists, playlist, wave };
 
 struct TrackSource {
     View view;
@@ -61,6 +61,7 @@ struct TrackSource {
     TracksPage fetch(const Music& music, const std::string& uid, size_t page) const {
         switch (view) {
         case View::search: return music.search(query, page);
+        case View::audius_search: return Music::search_audius(query, page);
         case View::favorites: return music.favorites(uid, page);
         case View::playlist: return music.playlist(playlist, page);
         default: return {};
@@ -262,6 +263,7 @@ private:
     std::optional<std::vector<std::string>> liked_;
     bool requested_likes_ = false;
     View view_ = View::none;
+    Catalog catalog_ = Catalog::yandex;
     std::wstring search_text_, section_;
     size_t page_ = 0;
     bool more_ = false;
@@ -450,7 +452,7 @@ private:
         for (auto id : {login_id, query_id, search_id, favorites_id, playlists_id, wave_id, links_id, open_id,
                        next_page_id, pause_id, next_id, previous_id, account_id, heading_id, now_id, status_id,
                        seek_id, elapsed_id, duration_id, volume_id, volume_label_id, like_id, meta_id, mini_id, empty_id,
-                       pin_id, shuffle_id, repeat_id, discord_id}) {
+                       pin_id, shuffle_id, repeat_id, discord_id, catalog_id}) {
             auto window = control(id);
             if (!window) continue;
             auto font = id == heading_id || id == now_id ? title_font_ :
@@ -475,7 +477,7 @@ private:
     void status(std::wstring_view text) const { set(status_id, text); }
 
     void remember_track(bool ended = false) {
-        if (!ready_ || current_.id.empty() || profile_.uid.empty()) return;
+        if (!ready_ || current_.catalog != Catalog::yandex || current_.id.empty() || profile_.uid.empty()) return;
         auto position = queued_seek_ ? *queued_seek_ :
                         seek_in_progress_ ? *seek_in_progress_ : media_time(&IMFPMediaPlayer::GetPosition);
         last_track_ = ResumeTrack{profile_.uid, current_, ended ? 0 : position};
@@ -500,6 +502,7 @@ private:
     void create_controls() {
         constexpr auto button = WS_TABSTOP | BS_OWNERDRAW;
         make(L"BUTTON", L"Войти", button, login_id);
+        make(L"BUTTON", L"Яндекс ⇄", button, catalog_id);
         make(L"BUTTON", discord_.enabled() ? L"Discord ✓" : L"Discord", button, discord_id);
         make(L"STATIC", L"Вход не выполнен", SS_CENTERIMAGE | SS_RIGHT | SS_ENDELLIPSIS, account_id);
         make(L"BUTTON", L"Любимые", button, favorites_id);
@@ -547,7 +550,7 @@ private:
                                  hwnd_, nullptr, GetModuleHandleW(nullptr), nullptr);
         if (tips_) {
             for (auto id : {search_id, previous_id, pause_id, next_id, like_id, seek_id, volume_id, mini_id, pin_id,
-                            shuffle_id, repeat_id}) {
+                            shuffle_id, repeat_id, catalog_id}) {
                 TOOLINFOW tool{};
                 tool.cbSize = sizeof(tool);
                 tool.uFlags = TTF_IDISHWND | TTF_SUBCLASS;
@@ -573,6 +576,7 @@ private:
             place(login_id, width - 86, 14, 72, 26);
             place(account_id, 163, 13, width - 340, 28);
             place(discord_id, width - 165, 14, 73, 26);
+            place(catalog_id, 10, 57, 110, 25);
             place(favorites_id, 10, 85, 110, 31);
             place(playlists_id, 10, 122, 110, 31);
             place(wave_id, 10, 159, 110, 31);
@@ -621,8 +625,10 @@ private:
         }
         mini_ = !mini_;
         for (auto id : {login_id, account_id, favorites_id, playlists_id, wave_id, query_id, search_id,
-                       heading_id, links_id, empty_id, open_id, next_page_id, shuffle_id, repeat_id, discord_id}) {
-            bool visible = !mini_ && (id != empty_id || selection() == LB_ERR);
+                       heading_id, links_id, empty_id, open_id, next_page_id, shuffle_id, repeat_id, discord_id,
+                       catalog_id}) {
+            bool visible = !mini_ && (id != empty_id || selection() == LB_ERR) &&
+                           (id != login_id || catalog_ == Catalog::yandex);
             ShowWindow(control(id), visible ? SW_SHOWNA : SW_HIDE);
         }
         set(mini_id, mini_ ? L"Развернуть" : L"Мини");
@@ -663,8 +669,8 @@ private:
             ui::fill(dc, {0, px(53), w, px(53)+1}, ui::line);
             DrawIconEx(dc, px(13), px(11), icon, px(31), px(31), 0, nullptr, DI_NORMAL);
             ui::text(dc, {px(53), px(9), px(155), px(30)}, L"LiteMusic", ui::ink, title_font_);
-            ui::text(dc, {px(53), px(29), px(156), px(45)}, L"Яндекс Музыка", ui::muted, body_font_);
-            ui::text(dc, {px(14), px(61), px(119), px(82)}, L"КОЛЛЕКЦИЯ", ui::dim, mono_font_);
+            ui::text(dc, {px(53), px(29), px(156), px(45)},
+                     catalog_ == Catalog::audius ? L"Audius" : L"Яндекс Музыка", ui::muted, body_font_);
             ui::fill(dc, {px(130), px(54), px(130)+1, deck}, ui::line);
             ui::box(dc, {px(141), px(62), w-px(74), px(92)}, px(9), ui::field, ui::line);
             ui::fill(dc, {px(141), px(126), w-px(14), px(127)}, ui::line);
@@ -714,7 +720,8 @@ private:
         const bool folder = view_ == View::playlists;
         if (index >= (folder ? playlists_.size() : rows_.size())) return TRUE;
         const bool chosen = (item.itemState & ODS_SELECTED) != 0;
-        const bool current = !folder && player_ && !current_.id.empty() && rows_[index].id == current_.id;
+        const bool current = !folder && player_ && !current_.id.empty() && rows_[index].id == current_.id &&
+                             rows_[index].catalog == current_.catalog;
         const auto bg = current ? ui::active : chosen ? ui::selected : ui::background;
         ui::fill(item.hDC, r, bg);
         ui::fill(item.hDC, {r.left + px(8), r.bottom - 1, r.right - px(4), r.bottom}, ui::line);
@@ -762,7 +769,8 @@ private:
                              (id == playlists_id && (view_ == View::playlists || view_ == View::playlist)) ||
                              (id == wave_id && view_ == View::wave) || (id == pin_id && mini_pinned_) ||
                              (id == shuffle_id && shuffle_) || (id == repeat_id && repeat_ != Repeat::off) ||
-                             (id == discord_id && discord_.enabled());
+                             (id == discord_id && discord_.enabled()) ||
+                             (id == catalog_id && catalog_ == Catalog::audius);
         const bool disabled = (item.itemState & ODS_DISABLED) != 0;
         const bool focus = (item.itemState & ODS_FOCUS) != 0;
         const bool pressed = (item.itemState & ODS_SELECTED) != 0;
@@ -788,7 +796,7 @@ private:
         case previous_id: glyph = Glyph::previous; break;
         case next_id: glyph = Glyph::next; break;
         case like_id:
-            glyph = is_liked(current_.id) ? Glyph::liked : Glyph::heart;
+            glyph = current_.catalog == Catalog::yandex && is_liked(current_.id) ? Glyph::liked : Glyph::heart;
             if (!disabled && glyph == Glyph::liked) color = ui::mint;
             break;
         case mini_id: glyph = mini_ ? Glyph::expand : Glyph::mini; break;
@@ -817,16 +825,23 @@ private:
 
     int selection() const { return static_cast<int>(SendMessageW(control(links_id), LB_GETCURSEL, 0, 0)); }
 
+    bool can_browse() const { return catalog_ == Catalog::audius || !token_.empty(); }
+
     void enable_controls() {
         bool free = job_ == Job::none;
         bool enabled = !token_.empty() && free;
-        for (auto id : {query_id, search_id, favorites_id, playlists_id, wave_id}) {
-            EnableWindow(control(id), enabled);
+        bool yandex = catalog_ == Catalog::yandex;
+        for (auto id : {favorites_id, playlists_id, wave_id}) {
+            EnableWindow(control(id), yandex && enabled);
         }
+        for (auto id : {query_id, search_id}) {
+            EnableWindow(control(id), free && can_browse());
+        }
+        EnableWindow(control(catalog_id), free && local_file_.empty());
         EnableWindow(control(login_id), free || job_ == Job::login);
-        EnableWindow(control(open_id), enabled && selection() != LB_ERR);
-        EnableWindow(control(next_page_id), enabled && more_);
-        auto modes = enabled && ((queue_ && queue_->source.collection()) ||
+        EnableWindow(control(open_id), free && can_browse() && selection() != LB_ERR);
+        EnableWindow(control(next_page_id), free && can_browse() && more_);
+        auto modes = yandex && enabled && ((queue_ && queue_->source.collection()) ||
                                   view_ == View::favorites || view_ == View::playlist);
         EnableWindow(control(shuffle_id), modes);
         EnableWindow(control(repeat_id), modes);
@@ -835,10 +850,11 @@ private:
         const bool can_play = ready_ || (enabled && resume_available_);
         EnableWindow(control(pause_id), can_play);
         EnableWindow(control(seek_id), ready_ && duration_ > 0);
-        EnableWindow(control(like_id), enabled && ready_ && !current_.id.empty());
-        set(like_id, ready_ && is_liked(current_.id) ? L"Убрать лайк" : L"Нравится");
+        bool yandex_track = current_.catalog == Catalog::yandex;
+        EnableWindow(control(like_id), enabled && ready_ && yandex_track && !current_.id.empty());
+        set(like_id, ready_ && yandex_track && is_liked(current_.id) ? L"Убрать лайк" : L"Нравится");
         EnableWindow(control(previous_id), free && ready_);
-        auto next = enabled && (wave_playing_ ? ready_ : has_next_track());
+        auto next = free_to_advance() && (wave_playing_ ? ready_ : has_next_track());
         EnableWindow(control(next_id), next);
         media_keys_.update(ready_ || resume_available_ || player_, playing_, next, free && ready_);
         for (auto id : {favorites_id, playlists_id, wave_id, login_id, shuffle_id, repeat_id}) {
@@ -885,7 +901,7 @@ private:
             sign_out();
             status(L"Яндекс отклонил вход. Попробуйте войти ещё раз.");
         } else if (!error_.empty()) {
-            if (token_.empty()) set(account_id, L"Вход в Яндекс Музыку");
+            if (token_.empty() && catalog_ == Catalog::yandex) set(account_id, L"Вход в Яндекс Музыку");
             status(error_);
         } else if (finish) {
             finish();
@@ -903,7 +919,7 @@ private:
     }
 
     void refresh_likes() {
-        if (job_ != Job::none || token_.empty() || !ready_ || requested_likes_) return;
+        if (job_ != Job::none || token_.empty() || !ready_ || current_.catalog != Catalog::yandex || requested_likes_) return;
         requested_likes_ = true;
         Music music(token_);
         work(Job::action, L"", [this, music, uid = profile_.uid](std::stop_token) -> Finish {
@@ -917,7 +933,7 @@ private:
     }
 
     void toggle_like() {
-        if (!ready_ || current_.id.empty()) return;
+        if (!ready_ || token_.empty() || current_.catalog != Catalog::yandex || current_.id.empty()) return;
         Music music(token_);
         work(Job::action, L"Сохраняем отметку…", [this, music, uid = profile_.uid, track = current_.id](std::stop_token) {
             auto ids = liked_ ? *liked_ : music.liked_tracks(uid);
@@ -948,7 +964,7 @@ private:
                 status(L"Вход выполнен. Windows не сохранила токен между запусками.");
             }
         }
-        if (last_track_ && last_track_->account == profile_.uid) {
+        if (!player_ && !queue_ && last_track_ && last_track_->account == profile_.uid) {
             resume_available_ = true;
             set(now_id, last_track_->track.name);
             set(meta_id, last_track_->track.artists);
@@ -997,32 +1013,57 @@ private:
     }
 
     void sign_out() {
-        release_player();
+        if (!queue_ || queue_->source.view != View::audius_search) {
+            release_player();
+            reset_wave();
+            queue_.reset();
+            current_ = {};
+            show_player_idle();
+        }
         last_track_.reset();
         resume_available_ = false;
         erase_resume_track();
         token_.clear();
         liked_.reset();
         requested_likes_ = false;
-        reset_wave();
-        queue_.reset();
         profile_ = {};
+        set(login_id, L"Войти");
+        if (catalog_ == Catalog::yandex) reset_browser();
+        status(L"Вы вышли из аккаунта Яндекс Музыки.");
+        enable_controls();
+        forget_token();
+    }
+
+    void reset_browser() {
         rows_.clear();
         playlists_.clear();
+        search_text_.clear();
         more_ = false;
         view_ = View::none;
         SendMessageW(control(links_id), LB_RESETCONTENT, 0, 0);
         set(open_id, L"Слушать");
-        set(login_id, L"Войти");
-        set(account_id, L"Вход не выполнен");
-        set(heading_id, L"Коллекция");
-        set(empty_id, L"Войдите, чтобы открыть коллекцию");
+        const bool audius = catalog_ == Catalog::audius;
+        set(account_id, audius ? L"Поиск без входа" :
+                        token_.empty() ? L"Вход не выполнен" :
+                        profile_.name.empty() ? L"Вход выполнен" : profile_.name);
+        set(heading_id, audius ? L"Поиск в Audius" : L"Коллекция");
+        set(empty_id, audius ? L"Найдите трек или исполнителя в Audius" :
+                      token_.empty() ? L"Войдите, чтобы открыть коллекцию" : L"Откройте коллекцию или найдите трек");
         ShowWindow(control(empty_id), mini_ ? SW_HIDE : SW_SHOWNA);
-        current_ = {};
-        show_player_idle();
-        status(L"Вы вышли из аккаунта.");
+    }
+
+    void toggle_catalog() {
+        bool audius = catalog_ == Catalog::yandex;
+        catalog_ = audius ? Catalog::audius : Catalog::yandex;
+        ShowWindow(control(login_id), audius ? SW_HIDE : SW_SHOWNA);
+        set(catalog_id, audius ? L"Audius ⇄" : L"Яндекс ⇄");
+        set(query_id, L"");
+        SendMessageW(control(query_id), EM_SETCUEBANNER, TRUE, reinterpret_cast<LPARAM>(
+            audius ? L"Поиск треков в Audius" : L"Название трека или исполнитель"));
+        reset_browser();
         enable_controls();
-        forget_token();
+        InvalidateRect(hwnd_, nullptr, FALSE);
+        SetFocus(control(can_browse() ? query_id : login_id));
     }
 
     void display_tracks(View view, std::wstring name, TracksPage result, size_t page) {
@@ -1082,6 +1123,7 @@ private:
             std::wstring title;
             switch (source.view) {
             case View::search: title = L"Поиск · " + source.query; break;
+            case View::audius_search: title = L"Audius · " + source.query; break;
             case View::favorites: title = L"Любимые треки"; break;
             case View::playlist: title = source.playlist.name; break;
             default: return {};
@@ -1096,6 +1138,10 @@ private:
     }
 
     void command(int id) {
+        if (id == catalog_id && job_ == Job::none && local_file_.empty()) {
+            toggle_catalog();
+            return;
+        }
         if (id == discord_id) {
             discord_.set_enabled(!discord_.enabled());
             save_discord_enabled(discord_.enabled());
@@ -1113,7 +1159,7 @@ private:
             apply_pin();
             return;
         }
-        if (id == login_id) {
+        if (id == login_id && catalog_ == Catalog::yandex) {
             if (job_ == Job::login) {
                 worker_.request_stop();
                 EnableWindow(control(login_id), FALSE);
@@ -1126,16 +1172,24 @@ private:
         }
         if (id == pause_id) {
             if (ready_) set_playing(!playing_);
-            else if (resume_available_ && free_to_advance()) resume_last_track();
+            else if (resume_available_ && job_ == Job::none && !token_.empty()) resume_last_track();
             return;
         }
         if (id == previous_id && ready_ && job_ == Job::none) {
             previous_track();
             return;
         }
-        if (token_.empty() || job_ != Job::none) return;
+        if (job_ != Job::none) return;
+        if (id == next_id) {
+            if (wave_playing_ ? ready_ : has_next_track()) advance_playback();
+            return;
+        }
+        if (id == like_id) {
+            toggle_like();
+            return;
+        }
+        if (!can_browse()) return;
         switch (id) {
-        case like_id: toggle_like(); break;
         case shuffle_id:
             shuffle_ = !shuffle_;
             if (queue_) queue_->shuffle.reset();
@@ -1148,16 +1202,13 @@ private:
         case search_id: {
             auto query = window_text(control(query_id));
             if (query.find_first_not_of(L" \t") == std::wstring::npos) status(L"Введите название трека или исполнителя.");
-            else load_view(View::search, 0, std::move(query));
+            else load_view(catalog_ == Catalog::audius ? View::audius_search : View::search, 0, std::move(query));
             break;
         }
-        case favorites_id: load_view(View::favorites, 0); break;
-        case playlists_id: load_view(View::playlists, 0); break;
-        case wave_id: begin_wave(); break;
+        case favorites_id: if (catalog_ == Catalog::yandex) load_view(View::favorites, 0); break;
+        case playlists_id: if (catalog_ == Catalog::yandex) load_view(View::playlists, 0); break;
+        case wave_id: if (catalog_ == Catalog::yandex) begin_wave(); break;
         case next_page_id: if (more_) load_view(view_, page_ + 1, search_text_, selected_playlist_); break;
-        case next_id:
-            if (wave_playing_ ? ready_ : has_next_track()) advance_playback();
-            break;
         case open_id: {
             int idx = selection();
             if (idx == LB_ERR) break;
@@ -1312,13 +1363,13 @@ private:
     }
 
     bool free_to_advance() const {
-        return job_ == Job::none && !token_.empty();
+        return job_ == Job::none && (!token_.empty() || (queue_ && queue_->source.view == View::audius_search));
     }
 
     bool showing_queue_page() const {
         const auto& source = queue_->source;
         if (view_ != source.view || page_ != queue_->page) return false;
-        if (view_ == View::search) return search_text_ == source.query;
+        if (view_ == View::search || view_ == View::audius_search) return search_text_ == source.query;
         if (view_ == View::playlist) {
             return selected_playlist_.owner == source.playlist.owner && selected_playlist_.kind == source.playlist.kind;
         }
@@ -1350,7 +1401,7 @@ private:
         Music music(token_);
         TrackQueue queue{{view_, search_text_, selected_playlist_}, {rows_, more_}, page_, index, {}};
         work(Job::action, L"Получаем поток…", [this, music, queue = std::move(queue)](std::stop_token) mutable {
-            auto audio = music.stream(queue.list.tracks.at(queue.index).id);
+            auto audio = music.stream(queue.list.tracks.at(queue.index));
             return [this, queue = std::move(queue), audio = std::move(audio)]() mutable {
                 queue_ = std::move(queue);
                 play_queue_track(std::move(audio));
@@ -1440,8 +1491,8 @@ private:
         auto loading = forward ? L"Получаем следующий трек…" : L"Получаем предыдущий трек…";
         if (forward ? queue_->index + 1 < queue_->list.tracks.size() : queue_->index > 0) {
             auto index = forward ? queue_->index + 1 : queue_->index - 1;
-            work(Job::action, loading, [this, music, index, id = queue_->list.tracks[index].id](std::stop_token) {
-                auto audio = music.stream(id);
+            work(Job::action, loading, [this, music, index, track = queue_->list.tracks[index]](std::stop_token) {
+                auto audio = music.stream(track);
                 return [this, index, audio = std::move(audio)]() mutable {
                     queue_->index = index;
                     play_queue_track(std::move(audio));
@@ -1451,7 +1502,7 @@ private:
         }
 
         work(Job::action, loading, [this, music, uid = profile_.uid, source = queue_->source, page = queue_->page,
-                                   id = queue_->list.tracks[queue_->index].id, forward, wrap,
+                                   track = queue_->list.tracks[queue_->index], forward, wrap,
                                    more = queue_->list.more]
              (std::stop_token stop) mutable -> Finish {
             TracksPage list;
@@ -1472,7 +1523,7 @@ private:
             } while (true);
             if (list.tracks.empty()) {
                 if (!forward) {
-                    auto audio = music.stream(id);
+                    auto audio = music.stream(track);
                     return [this, audio = std::move(audio)]() mutable { play_queue_track(std::move(audio)); };
                 }
                 return [this] {
@@ -1481,7 +1532,7 @@ private:
                 };
             }
             auto index = forward ? size_t{0} : list.tracks.size() - 1;
-            auto audio = music.stream(list.tracks[index].id);
+            auto audio = music.stream(list.tracks[index]);
             return [this, page, index, list = std::move(list), audio = std::move(audio)]() mutable {
                 play_queue_page(page, index, std::move(list), std::move(audio));
             };

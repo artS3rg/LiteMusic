@@ -8,10 +8,13 @@
 #include <string_view>
 #include <vector>
 
+enum class Catalog { yandex, audius };
+
 struct Track {
     std::string id;
     std::wstring name;
     std::wstring artists;
+    Catalog catalog = Catalog::yandex;
 };
 
 struct Playlist {
@@ -62,6 +65,7 @@ public:
     static std::string sign_in(const std::function<bool()>& canceled, const std::function<void(DeviceCode)>& notify);
     Profile profile() const;
     TracksPage search(const std::wstring& query, size_t page) const;
+    static TracksPage search_audius(std::wstring_view query, size_t page);
     TracksPage favorites(const std::string& uid, size_t page) const;
     CollectionPages favorite_pages(const std::string& uid, const std::function<bool()>& canceled) const;
     std::vector<std::string> liked_tracks(const std::string& uid) const;
@@ -70,6 +74,7 @@ public:
     TracksPage playlist(const Playlist& list, size_t page) const;
     CollectionPages playlist_pages(const Playlist& list, const std::function<bool()>& canceled) const;
     Audio stream(const std::string& track) const;
+    Audio stream(const Track& track) const;
     Wave wave(const std::string& previous = {}) const;
     void wave_event(std::string_view type, const std::string& batch = {},
                     const std::string& track = {}, double played_seconds = 0) const;
