@@ -315,7 +315,7 @@ private:
         sign_->copy_label(signing_ ? "Отмена" : connected ? "Выйти" : "Войти");
         enabled(sign_, !follow && yandex && local_.empty() && (!busy_ || signing_));
         enabled(catalog_button_, local_.empty() && !busy_);
-        enabled(room_button_, local_.empty());
+        enabled(room_button_, local_.empty() && (!busy_ || room_mode_ != RoomView::idle));
         for (auto* b : {favorites_, playlists_, wave_button_}) enabled(b, yandex && connected && !busy_ && (!follow || b != wave_button_));
         enabled(search_, browsing);
         enabled(search_button_, browsing && !busy_);

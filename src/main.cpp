@@ -901,7 +901,7 @@ private:
             EnableWindow(control(id), free && can_browse());
         }
         EnableWindow(control(catalog_id), free && local_file_.empty());
-        EnableWindow(control(room_id), local_file_.empty());
+        EnableWindow(control(room_id), local_file_.empty() && (free || room_mode_ != RoomView::idle));
         EnableWindow(control(login_id), !follow && (free || job_ == Job::login));
         EnableWindow(control(open_id), !follow && free && can_browse() && selection() != LB_ERR);
         EnableWindow(control(next_page_id), free && can_browse() && more_);
@@ -921,7 +921,7 @@ private:
         auto next = !follow && free_to_advance() && (wave_playing_ ? ready_ : has_next_track());
         EnableWindow(control(next_id), next);
         media_keys_.update(!follow && (ready_ || resume_available_ || player_), playing_, next, !follow && free && ready_);
-        for (auto id : {favorites_id, playlists_id, wave_id, login_id, shuffle_id, repeat_id}) {
+        for (auto id : {favorites_id, playlists_id, wave_id, login_id, shuffle_id, repeat_id, room_id}) {
             InvalidateRect(control(id), nullptr, FALSE);
         }
     }
@@ -1331,6 +1331,10 @@ private:
         RoomDialog dialog{widen(state.code), state.mode != RoomView::idle};
         auto action = DialogBoxParamW(GetModuleHandleW(nullptr), MAKEINTRESOURCEW(IDD_ROOM), hwnd_, room_dialog,
                                       reinterpret_cast<LPARAM>(&dialog));
+        if (action == -1) {
+            status(L"Не удалось открыть окно комнаты (Windows " + std::to_wstring(GetLastError()) + L").");
+            return;
+        }
         if (dialog.connected) {
             if (action == IDC_ROOM_CREATE && copy_room_code(hwnd_, dialog.code)) status(L"Код комнаты скопирован.");
             if (action == IDOK) room_.leave();
