@@ -1,5 +1,5 @@
 Package: litemusic
-Version: 0.1.3
+Version: 0.1.4
 Architecture: amd64
 Section: sound
 Priority: optional
